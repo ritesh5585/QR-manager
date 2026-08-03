@@ -22,19 +22,37 @@ const MarkerDetectionVisualizer = ({ onFourMarkersDetected }) => {
     const canvas = canvasRef.current;
     const context = canvas.getContext("2d");
 
+    // FIX: guards against React StrictMode's double-invoke in dev, which was
+    // causing "AbortError: play() request was interrupted" — if the effect's
+    // cleanup already ran by the time getUserMedia/video.play() resolves, we
+    // stop here instead of wiring up a camera/loop for an unmounted component.
+    let cancelled = false;
+    let rafId = null;
+
     const startCamera = async () => {
       try {
-        
-        console.log("MediaDevices:", navigator.mediaDevices);
         const stream = await navigator.mediaDevices.getUserMedia({
           video: {
             facingMode: "environment",
           },
         });
 
-        video.srcObject = stream;
+        if (cancelled) {
+          // Component was unmounted while we were waiting for permission —
+          // release the camera immediately instead of leaving it open.
+          stream.getTracks().forEach((track) => track.stop());
+          return;
+        }
 
+        video.srcObject = stream;
         await video.play();
+
+        // FIX: videoAspectRatio was declared with a setter but never actually
+        // updated — it stayed hardcoded at 4/3 forever. Now it reflects the
+        // real camera stream's dimensions once they're known.
+        if (video.videoWidth && video.videoHeight) {
+          setVideoAspectRatio(video.videoWidth / video.videoHeight);
+        }
       } catch (err) {
         console.error("Camera Error:", err);
       }
@@ -42,7 +60,6 @@ const MarkerDetectionVisualizer = ({ onFourMarkersDetected }) => {
 
     const getWarpedImage = (srcCanvas, corners) => {
       const srcMat = cv.imread(srcCanvas);
-
       const srcTri = cv.matFromArray(4, 1, cv.CV_32FC2, corners.flat());
 
       const width = video.videoWidth;
@@ -58,7 +75,6 @@ const MarkerDetectionVisualizer = ({ onFourMarkersDetected }) => {
         0,
         height,
       ]);
-      console.log("warped image:", getWarpedImage);
 
       const M = cv.getPerspectiveTransform(srcTri, dstTri);
       const dst = new cv.Mat();
@@ -78,6 +94,12 @@ const MarkerDetectionVisualizer = ({ onFourMarkersDetected }) => {
       resultCanvas.height = height;
       cv.imshow(resultCanvas, dst);
       const dataUrl = resultCanvas.toDataURL();
+
+      // FIX: was `console.log("warped image:", getWarpedImage)` — logged the
+      // function itself, not the actual cropped result. Now logs the useful
+      // value (or remove entirely once you've confirmed it works).
+      console.log("✅ Warped image ready:", dataUrl.slice(0, 50) + "...");
+
       setCroppedImage(dataUrl);
       onFourMarkersDetected && onFourMarkersDetected(dataUrl);
 
@@ -166,7 +188,6 @@ const MarkerDetectionVisualizer = ({ onFourMarkersDetected }) => {
         );
 
         const detectedMarkers = detector.detect(imageData);
-        // console.log(detectedMarkers)
 
         detectedMarkers.forEach((marker) => {
           const normalizedMarker = {
@@ -200,106 +221,151 @@ const MarkerDetectionVisualizer = ({ onFourMarkersDetected }) => {
     };
 
     const process = () => {
+      if (cancelled) return; // FIX: stop the loop for good once unmounted
+
       if (!video || video.readyState !== 4) {
-        requestAnimationFrame(process);
+        rafId = requestAnimationFrame(process);
         return;
       }
 
-      canvas.width = video.videoWidth;
-      canvas.height = video.videoHeight;
-      context.drawImage(video, 0, 0, canvas.width, canvas.height);
+      // FIX: the entire body is now wrapped in try/catch. Previously, a
+      // single thrown error anywhere in here (e.g. the `rderedCorners` typo
+      // that used to be here) would silently kill the whole animation loop
+      // forever, with no explanation in the console. Now it logs and keeps
+      // scanning on the next frame instead of freezing.
+      try {
+        canvas.width = video.videoWidth;
+        canvas.height = video.videoHeight;
+        context.drawImage(video, 0, 0, canvas.width, canvas.height);
 
-      const markers = detectMarkersRobustly();
+        const markers = detectMarkersRobustly();
 
-      markers.forEach((marker) => {
-        context.strokeStyle = "red";
-        context.lineWidth = 3;
-        context.beginPath();
-        marker.corners.forEach((corner, i) => {
-          const next = marker.corners[(i + 1) % marker.corners.length];
-          context.moveTo(corner.x, corner.y);
-          context.lineTo(next.x, next.y);
+        markers.forEach((marker) => {
+          context.strokeStyle = "red";
+          context.lineWidth = 3;
+          context.beginPath();
+          marker.corners.forEach((corner, i) => {
+            const next = marker.corners[(i + 1) % marker.corners.length];
+            context.moveTo(corner.x, corner.y);
+            context.lineTo(next.x, next.y);
+          });
+          context.stroke();
+          context.fillStyle = "yellow";
+          context.font = "20px sans-serif";
+          context.fillText(
+            `ID:${marker.id}`,
+            marker.corners[0].x,
+            marker.corners[0].y - 10,
+          );
         });
-        context.stroke();
-        context.fillStyle = "yellow";
-        context.font = "20px sans-serif";
-        context.fillText(
-          `ID:${marker.id}`,
-          marker.corners[0].x,
-          marker.corners[0].y - 10,
-        );
-      });
 
-      const selectedMarkers = markers.slice(0, 4);
-      // console.log(selectedMarkers);
+        const selectedMarkers = markers.slice(0, 4);
 
-      if (selectedMarkers.length >= 4) {
-        stableFrames += 1;
-      } else {
-        stableFrames = 0;
-      }
-
-      if (stableFrames >= 6 && !processed) {
-        processed = true;
-
-        const orderedMarkers = orderMarkersForDocument(selectedMarkers);
-        console.log(orderedMarkers);
-
-        if (!orderedMarkers) {
-          requestAnimationFrame(process);
-          return;
+        if (selectedMarkers.length >= 4) {
+          stableFrames += 1;
+        } else {
+          stableFrames = 0;
         }
 
-        const orderedCorners = [
-          "topLeft",
-          "topRight",
-          "bottomRight",
-          "bottomLeft",
-        ]
-          .map((position, index) =>
-            getDocumentCorner(orderedMarkers[index], position),
-          )
-          .filter(Boolean);
+        if (stableFrames >= 6 && !processed) {
+          processed = true;
 
-        if (orderedCorners.length !== 4) {
-          requestAnimationFrame(process);
-          return;
+          const orderedMarkers = orderMarkersForDocument(selectedMarkers);
+          console.log("Ordered markers:", orderedMarkers);
+
+          if (!orderedMarkers) {
+            processed = false; // FIX: was left permanently stuck at `true`
+            rafId = requestAnimationFrame(process);
+            return;
+          }
+
+          const orderedCorners = [
+            "topLeft",
+            "topRight",
+            "bottomRight",
+            "bottomLeft",
+          ]
+            .map((position, index) =>
+              getDocumentCorner(orderedMarkers[index], position),
+            )
+            .filter(Boolean);
+
+          if (orderedCorners.length !== 4) {
+            processed = false; // FIX: same reset — otherwise this path also
+            // permanently locks `processed = true` with nothing ever run,
+            // meaning the scanner silently stops trying forever.
+            rafId = requestAnimationFrame(process);
+            return;
+          }
+
+          // FIX: this was `console.log("order corner=", rderedCorners)` —
+          // `rderedCorners` does not exist anywhere in the file (typo for
+          // `orderedCorners`). That ReferenceError was thrown here on every
+          // successful detection, which killed the animation loop right
+          // before `getWarpedImage()` — the one function that actually uses
+          // the successful detection — ever got called. This was the root
+          // cause of "camera detects markers but nothing happens after."
+          console.log("Ordered corners:", orderedCorners);
+
+          context.strokeStyle = "lime";
+          context.lineWidth = 3;
+          context.beginPath();
+          orderedCorners.forEach((pt, i) => {
+            const next = orderedCorners[(i + 1) % 4];
+            context.moveTo(pt[0], pt[1]);
+            context.lineTo(next[0], next[1]);
+          });
+          context.stroke();
+
+          console.log(
+            "✅ Stable marker set detected:",
+            orderedMarkers.map((marker) => marker.id).join(", "),
+          );
+
+          getWarpedImage(canvas, orderedCorners);
         }
-        console.log("order corner=", rderedCorners);
-
-        context.strokeStyle = "lime";
-        context.lineWidth = 3;
-        context.beginPath();
-        orderedCorners.forEach((pt, i) => {
-          const next = orderedCorners[(i + 1) % 4];
-          context.moveTo(pt[0], pt[1]);
-          context.lineTo(next[0], next[1]);
-        });
-        context.stroke();
-
-        console.log(
-          "✅ Stable marker set detected:",
-          orderedMarkers.map((marker) => marker.id).join(", "),
-        );
-
-        getWarpedImage(canvas, orderedCorners);
-        console.log(getWarpedImage);
+      } catch (err) {
+        // FIX: this catch is new — without it, any future bug in this block
+        // (typo, null reference, OpenCV error, etc.) will again silently
+        // stop the camera loop with zero explanation, and you'll be back to
+        // "detection seems to work but nothing happens." Now it's always
+        // visible in the console immediately.
+        console.error("💥 process() crashed on this frame:", err);
       }
 
-      requestAnimationFrame(process);
+      rafId = requestAnimationFrame(process);
     };
 
     startCamera().then(() => {
-      requestAnimationFrame(process);
+      if (!cancelled) {
+        rafId = requestAnimationFrame(process);
+      }
     });
 
     return () => {
-      const stream = video.srcObject;
+      cancelled = true;
+
+      // FIX: previously nothing ever cancelled the requestAnimationFrame
+      // loop on unmount — it kept calling itself forever in the background
+      // (harmless once the stream is stopped, since readyState stops
+      // advancing, but it's a real, avoidable leak, especially noticeable
+      // under React StrictMode's mount→unmount→remount in dev).
+      if (rafId) {
+        cancelAnimationFrame(rafId);
+      }
+
+      const stream = video?.srcObject;
       if (stream) {
         stream.getTracks().forEach((track) => track.stop());
       }
     };
-  }, []);
+  }, [onFourMarkersDetected]);
+  // FIX: added onFourMarkersDetected to the dependency array. It's used
+  // inside the effect, and omitting it (as before) is a stale-closure risk
+  // if the parent ever passes a new callback — ESLint's exhaustive-deps rule
+  // would flag this. If the parent doesn't memoize this prop, this may cause
+  // the effect (and camera) to restart on every parent re-render — worth
+  // wrapping the parent's callback in useCallback if that becomes an issue.
 
   return (
     <div className="flex flex-col items-center p-4 max-w-md mx-auto bg-[#f3e8d4] h-[100dvh]">
@@ -333,30 +399,15 @@ const MarkerDetectionVisualizer = ({ onFourMarkersDetected }) => {
               Align all 4 markers in view
             </div>
           </div>
-          {/* <div className="absolute -bottom-24 left-0 right-0 px-6">
-            <p className="text-sm font-semibold text-gray-800 mb-1 tracking-wide">📋 Scanning Guide</p>
-            <ul className="text-xs text-gray-700 space-y-0.5 list-disc list-inside">
-              <li>Ensure good lighting</li>
-              <li>Hold steady and align all 4 markers</li>
-              <li>Keep the document fully within the frame</li>
-            </ul>
-          </div> */}
         </div>
       ) : (
         <div className="w-full">
           <div className="flex justify-center items-center h-full w-auto bg-gray-300 rounded-lg mb-4">
-            {croppedImage ? (
-              <img
-                src={croppedImage}
-                alt="Cropped document"
-                className="max-h-full max-w-full object-contain rounded border border-gray-200 shadow-sm"
-              />
-            ) : (
-              <div className="flex flex-col items-center">
-                <div className="w-12 h-12 border-4 border-blue-500 border-t-transparent rounded-full animate-spin mb-2"></div>
-                <p className="text-gray-600">Processing document...</p>
-              </div>
-            )}
+            <img
+              src={croppedImage}
+              alt="Cropped document"
+              className="max-h-full max-w-full object-contain rounded border border-gray-200 shadow-sm"
+            />
           </div>
 
           <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 flex items-center gap-4">
