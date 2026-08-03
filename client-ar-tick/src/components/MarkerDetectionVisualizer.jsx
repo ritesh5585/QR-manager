@@ -25,6 +25,7 @@ const MarkerDetectionVisualizer = ({ onFourMarkersDetected }) => {
     const startCamera = async () => {
       try {
         
+        console.log("MediaDevices:", navigator.mediaDevices);
         const stream = await navigator.mediaDevices.getUserMedia({
           video: {
             facingMode: "environment",
@@ -165,6 +166,7 @@ const MarkerDetectionVisualizer = ({ onFourMarkersDetected }) => {
         );
 
         const detectedMarkers = detector.detect(imageData);
+        // console.log(detectedMarkers)
 
         detectedMarkers.forEach((marker) => {
           const normalizedMarker = {
@@ -229,7 +231,7 @@ const MarkerDetectionVisualizer = ({ onFourMarkersDetected }) => {
       });
 
       const selectedMarkers = markers.slice(0, 4);
-      console.log(selectedMarkers);
+      // console.log(selectedMarkers);
 
       if (selectedMarkers.length >= 4) {
         stableFrames += 1;
@@ -241,6 +243,7 @@ const MarkerDetectionVisualizer = ({ onFourMarkersDetected }) => {
         processed = true;
 
         const orderedMarkers = orderMarkersForDocument(selectedMarkers);
+        console.log(orderedMarkers);
 
         if (!orderedMarkers) {
           requestAnimationFrame(process);
