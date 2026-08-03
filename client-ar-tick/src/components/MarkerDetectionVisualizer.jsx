@@ -1,0 +1,376 @@
+import React, { useEffect, useRef, useState } from "react";
+
+const MarkerDetectionVisualizer = ({ onFourMarkersDetected }) => {
+  const videoRef = useRef(null);
+  const canvasRef = useRef(null);
+  const [croppedImage, setCroppedImage] = useState(null);
+  const [videoAspectRatio, setVideoAspectRatio] = useState(4 / 3);
+
+  useEffect(() => {
+    if (!window.cv || !window.AR) {
+      console.error(
+        "❌ OpenCV or ArUco not loaded. Make sure scripts are included in index.html",
+      );
+      return;
+    }
+
+    const cv = window.cv;
+    const AR = window.AR;
+    const detector = new AR.Detector();
+
+    const video = videoRef.current;
+    const canvas = canvasRef.current;
+    const context = canvas.getContext("2d");
+
+    const startCamera = async () => {
+      try {
+        
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: {
+            facingMode: "environment",
+          },
+        });
+
+        video.srcObject = stream;
+
+        await video.play();
+      } catch (err) {
+        console.error("Camera Error:", err);
+      }
+    };
+
+    const getWarpedImage = (srcCanvas, corners) => {
+      const srcMat = cv.imread(srcCanvas);
+
+      const srcTri = cv.matFromArray(4, 1, cv.CV_32FC2, corners.flat());
+
+      const width = video.videoWidth;
+      const height = video.videoHeight;
+
+      const dstTri = cv.matFromArray(4, 1, cv.CV_32FC2, [
+        0,
+        0,
+        width,
+        0,
+        width,
+        height,
+        0,
+        height,
+      ]);
+      console.log("warped image:", getWarpedImage);
+
+      const M = cv.getPerspectiveTransform(srcTri, dstTri);
+      const dst = new cv.Mat();
+      const dsize = new cv.Size(width, height);
+      cv.warpPerspective(
+        srcMat,
+        dst,
+        M,
+        dsize,
+        cv.INTER_LINEAR,
+        cv.BORDER_CONSTANT,
+        new cv.Scalar(),
+      );
+
+      const resultCanvas = document.createElement("canvas");
+      resultCanvas.width = width;
+      resultCanvas.height = height;
+      cv.imshow(resultCanvas, dst);
+      const dataUrl = resultCanvas.toDataURL();
+      setCroppedImage(dataUrl);
+      onFourMarkersDetected && onFourMarkersDetected(dataUrl);
+
+      srcMat.delete();
+      dst.delete();
+      M.delete();
+      srcTri.delete();
+      dstTri.delete();
+    };
+
+    const getMarkerCenter = (marker) => {
+      const sum = marker.corners.reduce(
+        (acc, corner) => ({ x: acc.x + corner.x, y: acc.y + corner.y }),
+        { x: 0, y: 0 },
+      );
+
+      return {
+        x: sum.x / marker.corners.length,
+        y: sum.y / marker.corners.length,
+      };
+    };
+
+    const orderMarkersForDocument = (markers) => {
+      if (!markers || markers.length < 4) return null;
+
+      const centers = markers.map((marker) => ({
+        marker,
+        center: getMarkerCenter(marker),
+      }));
+
+      centers.sort((a, b) => a.center.x - b.center.x);
+
+      const leftMarkers = centers
+        .slice(0, 2)
+        .sort((a, b) => a.center.y - b.center.y);
+      const rightMarkers = centers
+        .slice(2)
+        .sort((a, b) => a.center.y - b.center.y);
+
+      return [
+        leftMarkers[0].marker,
+        rightMarkers[0].marker,
+        rightMarkers[1].marker,
+        leftMarkers[1].marker,
+      ];
+    };
+
+    const getDocumentCorner = (marker, position) => {
+      const cornerIndexMap = {
+        topLeft: 3,
+        topRight: 0,
+        bottomRight: 2,
+        bottomLeft: 1,
+      };
+
+      const corner = marker?.corners?.[cornerIndexMap[position]];
+      return corner ? [corner.x, corner.y] : null;
+    };
+
+    let processed = false;
+    let stableFrames = 0;
+
+    const detectMarkersRobustly = () => {
+      const scales = [1, 1.5, 2];
+      const allDetectedMarkers = [];
+
+      scales.forEach((scale) => {
+        const tempCanvas = document.createElement("canvas");
+        tempCanvas.width = Math.round(canvas.width * scale);
+        tempCanvas.height = Math.round(canvas.height * scale);
+
+        const tempContext = tempCanvas.getContext("2d");
+        tempContext.drawImage(
+          canvas,
+          0,
+          0,
+          tempCanvas.width,
+          tempCanvas.height,
+        );
+
+        const imageData = tempContext.getImageData(
+          0,
+          0,
+          tempCanvas.width,
+          tempCanvas.height,
+        );
+
+        const detectedMarkers = detector.detect(imageData);
+
+        detectedMarkers.forEach((marker) => {
+          const normalizedMarker = {
+            ...marker,
+            corners: marker.corners.map((corner) => ({
+              x: corner.x / scale,
+              y: corner.y / scale,
+            })),
+          };
+
+          allDetectedMarkers.push(normalizedMarker);
+        });
+      });
+
+      const markerMap = new Map();
+      allDetectedMarkers.forEach((marker) => {
+        const existing = markerMap.get(marker.id);
+
+        if (!existing) {
+          markerMap.set(marker.id, marker);
+          return;
+        }
+
+        existing.corners = existing.corners.map((corner, index) => ({
+          x: (corner.x + marker.corners[index].x) / 2,
+          y: (corner.y + marker.corners[index].y) / 2,
+        }));
+      });
+
+      return Array.from(markerMap.values());
+    };
+
+    const process = () => {
+      if (!video || video.readyState !== 4) {
+        requestAnimationFrame(process);
+        return;
+      }
+
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+      context.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+      const markers = detectMarkersRobustly();
+
+      markers.forEach((marker) => {
+        context.strokeStyle = "red";
+        context.lineWidth = 3;
+        context.beginPath();
+        marker.corners.forEach((corner, i) => {
+          const next = marker.corners[(i + 1) % marker.corners.length];
+          context.moveTo(corner.x, corner.y);
+          context.lineTo(next.x, next.y);
+        });
+        context.stroke();
+        context.fillStyle = "yellow";
+        context.font = "20px sans-serif";
+        context.fillText(
+          `ID:${marker.id}`,
+          marker.corners[0].x,
+          marker.corners[0].y - 10,
+        );
+      });
+
+      const selectedMarkers = markers.slice(0, 4);
+      console.log(selectedMarkers);
+
+      if (selectedMarkers.length >= 4) {
+        stableFrames += 1;
+      } else {
+        stableFrames = 0;
+      }
+
+      if (stableFrames >= 6 && !processed) {
+        processed = true;
+
+        const orderedMarkers = orderMarkersForDocument(selectedMarkers);
+
+        if (!orderedMarkers) {
+          requestAnimationFrame(process);
+          return;
+        }
+
+        const orderedCorners = [
+          "topLeft",
+          "topRight",
+          "bottomRight",
+          "bottomLeft",
+        ]
+          .map((position, index) =>
+            getDocumentCorner(orderedMarkers[index], position),
+          )
+          .filter(Boolean);
+
+        if (orderedCorners.length !== 4) {
+          requestAnimationFrame(process);
+          return;
+        }
+        console.log("order corner=", rderedCorners);
+
+        context.strokeStyle = "lime";
+        context.lineWidth = 3;
+        context.beginPath();
+        orderedCorners.forEach((pt, i) => {
+          const next = orderedCorners[(i + 1) % 4];
+          context.moveTo(pt[0], pt[1]);
+          context.lineTo(next[0], next[1]);
+        });
+        context.stroke();
+
+        console.log(
+          "✅ Stable marker set detected:",
+          orderedMarkers.map((marker) => marker.id).join(", "),
+        );
+
+        getWarpedImage(canvas, orderedCorners);
+        console.log(getWarpedImage);
+      }
+
+      requestAnimationFrame(process);
+    };
+
+    startCamera().then(() => {
+      requestAnimationFrame(process);
+    });
+
+    return () => {
+      const stream = video.srcObject;
+      if (stream) {
+        stream.getTracks().forEach((track) => track.stop());
+      }
+    };
+  }, []);
+
+  return (
+    <div className="flex flex-col items-center p-4 max-w-md mx-auto bg-[#f3e8d4] h-[100dvh]">
+      <h1 className="text-2xl font-bold text-[#046a81]">Scanner</h1>
+
+      {!croppedImage ? (
+        <div className="relative w-full" style={{ height: "500px" }}>
+          <video
+            ref={videoRef}
+            playsInline
+            autoPlay
+            muted
+            style={{ display: "none" }}
+          />
+          <div
+            className="absolute inset-0 flex justify-center items-center"
+            style={{
+              aspectRatio: videoAspectRatio,
+              maxWidth: "100%",
+              maxHeight: "100%",
+              margin: "auto",
+            }}
+          >
+            <canvas
+              ref={canvasRef}
+              className="w-full h-full object-contain rounded-lg border-2 border-gray-300 shadow-md"
+            />
+          </div>
+          <div className="absolute bottom-0 left-0 right-0 flex justify-center">
+            <div className="bg-black bg-opacity-70 text-white px-3 py-1 rounded-full text-sm">
+              Align all 4 markers in view
+            </div>
+          </div>
+          {/* <div className="absolute -bottom-24 left-0 right-0 px-6">
+            <p className="text-sm font-semibold text-gray-800 mb-1 tracking-wide">📋 Scanning Guide</p>
+            <ul className="text-xs text-gray-700 space-y-0.5 list-disc list-inside">
+              <li>Ensure good lighting</li>
+              <li>Hold steady and align all 4 markers</li>
+              <li>Keep the document fully within the frame</li>
+            </ul>
+          </div> */}
+        </div>
+      ) : (
+        <div className="w-full">
+          <div className="flex justify-center items-center h-full w-auto bg-gray-300 rounded-lg mb-4">
+            {croppedImage ? (
+              <img
+                src={croppedImage}
+                alt="Cropped document"
+                className="max-h-full max-w-full object-contain rounded border border-gray-200 shadow-sm"
+              />
+            ) : (
+              <div className="flex flex-col items-center">
+                <div className="w-12 h-12 border-4 border-blue-500 border-t-transparent rounded-full animate-spin mb-2"></div>
+                <p className="text-gray-600">Processing document...</p>
+              </div>
+            )}
+          </div>
+
+          <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 flex items-center gap-4">
+            <div className="w-5 h-5 border-2 border-blue-300 border-t-blue-600 rounded-full animate-spin"></div>
+            <div>
+              <p className="text-blue-800 font-medium">
+                Document captured successfully
+              </p>
+              <p className="text-blue-600 text-sm mt-0.5">
+                Processing your document...
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
+export default MarkerDetectionVisualizer;
