@@ -30,31 +30,28 @@ const MarkerDetectionVisualizer = ({ onFourMarkersDetected }) => {
     let rafId = null;
 
     const startCamera = async () => {
+      console.log("1. startCamera called");
+
       try {
+        console.log("2. Requesting camera permission");
+
         const stream = await navigator.mediaDevices.getUserMedia({
           video: {
             facingMode: "environment",
           },
         });
 
-        if (cancelled) {
-          // Component was unmounted while we were waiting for permission —
-          // release the camera immediately instead of leaving it open.
-          stream.getTracks().forEach((track) => track.stop());
-          return;
-        }
+        console.log("3. Stream received:", stream);
 
         video.srcObject = stream;
+
+        console.log("4. srcObject assigned");
+
         await video.play();
 
-        // FIX: videoAspectRatio was declared with a setter but never actually
-        // updated — it stayed hardcoded at 4/3 forever. Now it reflects the
-        // real camera stream's dimensions once they're known.
-        if (video.videoWidth && video.videoHeight) {
-          setVideoAspectRatio(video.videoWidth / video.videoHeight);
-        }
+        console.log("5. Video playing");
       } catch (err) {
-        console.error("Camera Error:", err);
+        console.error("Camera Error", err);
       }
     };
 
@@ -337,8 +334,12 @@ const MarkerDetectionVisualizer = ({ onFourMarkersDetected }) => {
     };
 
     startCamera().then(() => {
+      console.log("6. startCamera finished");
+
       if (!cancelled) {
         rafId = requestAnimationFrame(process);
+
+        console.log("7. rafId =", rafId);
       }
     });
 
@@ -353,11 +354,13 @@ const MarkerDetectionVisualizer = ({ onFourMarkersDetected }) => {
       if (rafId) {
         cancelAnimationFrame(rafId);
       }
+      console.log(rafId);
 
       const stream = video?.srcObject;
       if (stream) {
         stream.getTracks().forEach((track) => track.stop());
       }
+      console.log(stream);
     };
   }, [onFourMarkersDetected]);
   // FIX: added onFourMarkersDetected to the dependency array. It's used

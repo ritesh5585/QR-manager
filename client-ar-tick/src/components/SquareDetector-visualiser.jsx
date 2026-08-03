@@ -31,6 +31,11 @@ const SquareDetector = ({ scannedImage }) => {
 
   // Prepare image URL
   useEffect(() => {
+    console.log("================================");
+    console.log("SquareDetector Mounted");
+    console.log("Received scannedImage:", scannedImage);
+    console.log("Type:", typeof scannedImage);
+    console.log("================================");
     if (scannedImage instanceof Blob) {
       const url = URL.createObjectURL(scannedImage);
       setImageURL(url);
