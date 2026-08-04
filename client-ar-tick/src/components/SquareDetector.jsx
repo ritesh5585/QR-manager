@@ -15,19 +15,19 @@ const SquareDetector = ({ qrId, scannedImage }) => {
     epsilonFactor: 0.03,
     minArea: 10,
     maxArea: 100000,
-    aspectRatioTolerance: 0.4
+    aspectRatioTolerance: 0.4,
   });
   const [roiParams] = useState({
     x: 45,
     y: 280,
     width: 55,
-    height: 260
+    height: 260,
   });
 
   const squareContent = {
     1: { title: "i_eat_while_distracted", fileType: "mp4" },
-    2: { title: "i_eat_in_a_hurry", fileType: "mp4"  },
-    3: { title: "i_eat_mindfully", fileType: "jpg"  }
+    2: { title: "i_eat_in_a_hurry", fileType: "mp4" },
+    3: { title: "i_eat_mindfully", fileType: "jpg" },
   };
 
   // Prepare image URL
@@ -35,7 +35,7 @@ const SquareDetector = ({ qrId, scannedImage }) => {
     if (scannedImage instanceof Blob) {
       const url = URL.createObjectURL(scannedImage);
       setImageURL(url);
-      
+
       return () => URL.revokeObjectURL(url);
     } else if (typeof scannedImage === "string") {
       setImageURL(scannedImage);
@@ -49,8 +49,8 @@ const SquareDetector = ({ qrId, scannedImage }) => {
       setCvReady(true);
     } else {
       console.error("❌ OpenCV.js not found. Loading from CDN...");
-      const script = document.createElement('script');
-      script.src = 'https://docs.opencv.org/4.5.0/opencv.js';
+      const script = document.createElement("script");
+      script.src = "https://docs.opencv.org/4.5.0/opencv.js";
       script.onload = () => {
         window.cv.onRuntimeInitialized = () => {
           setCvReady(true);
@@ -65,10 +65,10 @@ const SquareDetector = ({ qrId, scannedImage }) => {
     const ranges = [
       { min: 285, max: 295, number: 1 },
       { min: 385, max: 395, number: 2 },
-      { min: 485, max: 495, number: 3 }
+      { min: 485, max: 495, number: 3 },
     ];
 
-    const foundRange = ranges.find(range => y >= range.min && y <= range.max);
+    const foundRange = ranges.find((range) => y >= range.min && y <= range.max);
     return foundRange ? foundRange.number : null;
   };
 
@@ -88,14 +88,35 @@ const SquareDetector = ({ qrId, scannedImage }) => {
       // Convert to grayscale
       cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
 
+      console.log(`📐 Cropped image size: ${gray.cols} x ${gray.rows}`);
+      console.log(
+        `📐 ROI needs: x=${roiParams.x}, y=${roiParams.y}, ` +
+          `right edge=${roiParams.x + roiParams.width}, ` +
+          `bottom edge=${roiParams.y + roiParams.height}`,
+      );
+
+      // GUARD: if the hardcoded ROI doesn't fit this image, stop cleanly
+      // instead of letting OpenCV throw an unreadable WASM exception.
+      if (
+        roiParams.x + roiParams.width > gray.cols ||
+        roiParams.y + roiParams.height > gray.rows
+      ) {
+        console.error(
+          `❌ ROI doesn't fit. Image is ${gray.cols}x${gray.rows}, but ROI ` +
+            `needs at least ${roiParams.x + roiParams.width}x${roiParams.y + roiParams.height}. ` +
+            `roiParams are hardcoded pixels — they don't match this camera's resolution.`,
+        );
+        return; // finally block below still runs and cleans up mats
+      }
+
       // Create ROI mask
       const roiRect = new cv.Rect(
-        roiParams.x, 
-        roiParams.y, 
-        roiParams.width, 
-        roiParams.height
+        roiParams.x,
+        roiParams.y,
+        roiParams.width,
+        roiParams.height,
       );
-      
+
       // Apply ROI to the image
       const roiGray = gray.roi(roiRect);
       const roiBlurred = new cv.Mat();
@@ -113,7 +134,7 @@ const SquareDetector = ({ qrId, scannedImage }) => {
         cv.ADAPTIVE_THRESH_GAUSSIAN_C,
         cv.THRESH_BINARY_INV,
         detectionParams.blockSize,
-        detectionParams.C
+        detectionParams.C,
       );
 
       // Morphological operations to clean up
@@ -127,7 +148,7 @@ const SquareDetector = ({ qrId, scannedImage }) => {
         contours,
         hierarchy,
         cv.RETR_EXTERNAL,
-        cv.CHAIN_APPROX_SIMPLE
+        cv.CHAIN_APPROX_SIMPLE,
       );
 
       // First collect all found squares
@@ -135,8 +156,7 @@ const SquareDetector = ({ qrId, scannedImage }) => {
       for (let i = 0; i < contours.size(); ++i) {
         const cnt = contours.get(i);
         const area = cv.contourArea(cnt);
-        
-        // Filter by area
+
         if (area < detectionParams.minArea || area > detectionParams.maxArea) {
           cnt.delete();
           continue;
@@ -146,33 +166,28 @@ const SquareDetector = ({ qrId, scannedImage }) => {
         const epsilon = detectionParams.epsilonFactor * cv.arcLength(cnt, true);
         cv.approxPolyDP(cnt, approx, epsilon, true);
 
-        // Check if it's a quadrilateral
         if (approx.rows === 4) {
           const rect = cv.boundingRect(cnt);
-          // Adjust rect coordinates to be relative to the whole image
           const adjustedRect = {
             x: rect.x + roiParams.x,
             y: rect.y + roiParams.y,
             width: rect.width,
-            height: rect.height
+            height: rect.height,
           };
-          
+
           const aspectRatio = adjustedRect.width / adjustedRect.height;
-          
-          // Check if it's square-ish
-          const isSquarish = Math.abs(aspectRatio - 1) < detectionParams.aspectRatioTolerance;
-          
+          const isSquarish =
+            Math.abs(aspectRatio - 1) < detectionParams.aspectRatioTolerance;
+
           if (isSquarish && adjustedRect.width > 5 && adjustedRect.height > 5) {
-            // Additional convexity check
             const hull = new cv.Mat();
             cv.convexHull(cnt, hull);
             const hullArea = cv.contourArea(hull);
             const convexityRatio = area / hullArea;
-            
+
             if (convexityRatio > 0.7) {
-              // Get square number based on y-coordinate
               const squareNumber = getSquareNumber(adjustedRect.y);
-              
+
               foundSquares.push({
                 x: adjustedRect.x,
                 y: adjustedRect.y,
@@ -180,43 +195,46 @@ const SquareDetector = ({ qrId, scannedImage }) => {
                 height: adjustedRect.height,
                 area: area,
                 number: squareNumber,
-                status: "found"
+                status: "found",
               });
             }
             hull.delete();
           }
         }
-          
-          approx.delete();
-          cnt.delete();
+
+        approx.delete();
+        cnt.delete();
       }
 
-      // Create array with all 14 squares, filling in missing ones
       const allSquares = Array.from({ length: 3 }, (_, i) => {
         const squareNumber = i + 1;
-        const foundSquare = foundSquares.find(sq => sq.number === squareNumber);
-        
-        return foundSquare || {
-          x: null,
-          y: null,
-          width: null,
-          height: null,
-          area: null,
-          number: squareNumber,
-          status: "notFound"
-        };
+        const foundSquare = foundSquares.find(
+          (sq) => sq.number === squareNumber,
+        );
+
+        return (
+          foundSquare || {
+            x: null,
+            y: null,
+            width: null,
+            height: null,
+            area: null,
+            number: squareNumber,
+            status: "notFound",
+          }
+        );
       });
 
       let checkedSquares = [];
 
       function getCheckedSquares(squareArray) {
-        squareArray.forEach(square => {
+        squareArray.forEach((square) => {
           if (square.status === "notFound") {
             const content = squareContent[square.number] || {};
             checkedSquares.push({
               number: square.number,
               title: content.title || `Square ${square.number}`,
-              fileType: content.fileType
+              fileType: content.fileType,
             });
           }
         });
@@ -226,31 +244,37 @@ const SquareDetector = ({ qrId, scannedImage }) => {
 
       getCheckedSquares(allSquares);
 
-      // Make API call if any square is missing
-      if(checkedSquares.length > 0){
+      if (checkedSquares.length > 0) {
         try {
-          await axios.patch(`${import.meta.env.VITE_API_URL}/qr/assign/${qrId}`, checkedSquares);
-          toast.success("QR assigned successfully", {id: "success"});
-          navigate(`/result/${qrId}`); 
+          await axios.patch(
+            `${import.meta.env.VITE_API_URL}/qr/assign/${qrId}`,
+            checkedSquares,
+          );
+          toast.success("QR assigned successfully", { id: "success" });
+          navigate(`/result/${qrId}`);
         } catch (error) {
           console.error("Assignment error:", error);
-          toast.error("Unable to process the QR", {id: "failed"});
+          toast.error("Unable to process the QR");
         }
       } else {
         setIsModalOpen(true);
       }
 
-      // Clean up ROI mats
       roiGray.delete();
       roiBlurred.delete();
       roiThresh.delete();
       roiMorphed.delete();
       kernel.delete();
     } catch (error) {
-      console.error('Error in square detection:', error);
+      // FIX: decode OpenCV.js's raw WASM exception pointer into a readable
+      // message instead of a meaningless number like "7025384".
+      const message =
+        typeof error === "number" && cv.exceptionFromPtr
+          ? cv.exceptionFromPtr(error).msg
+          : error?.message || error;
+      console.error("Error in square detection:", message);
       toast.error("Error detecting squares");
     } finally {
-      // Clean up memory
       src.delete();
       gray.delete();
       blurred.delete();
@@ -290,7 +314,9 @@ const SquareDetector = ({ qrId, scannedImage }) => {
                   d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
                 />
               </svg>
-              <h3 className="text-lg font-medium text-gray-900 mt-3">No Checks Detected</h3>
+              <h3 className="text-lg font-medium text-gray-900 mt-3">
+                No Checks Detected
+              </h3>
               <div className="mt-4">
                 <button
                   type="button"

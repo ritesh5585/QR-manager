@@ -19,16 +19,12 @@ const MarkerDetectionVisualizer = ({ onFourMarkersDetected }) => {
     }
 
     const cv = window.cv;
-    // const AR = window.AR;
-    // const detector = new AR.Detector();
-
     const video = videoRef.current;
     const canvas = canvasRef.current;
     const context = canvas.getContext("2d");
 
     let cancelled = false;
     let rafId = null;
-
     const startCamera = async () => {
       try {
         const stream = await navigator.mediaDevices.getUserMedia({
@@ -81,9 +77,6 @@ const MarkerDetectionVisualizer = ({ onFourMarkersDetected }) => {
       resultCanvas.height = height;
       cv.imshow(resultCanvas, dst);
 
-      // // TEMP: add right after cv.inRange(...) in cornerBlockDetector.js
-      // cv.imshow(canvasRef.current, mask); // shows black/white mask instead of camera feed
-
       const dataUrl = resultCanvas.toDataURL();
 
       console.log("✅ Warped image ready:", dataUrl.slice(0, 50) + "...");
@@ -98,122 +91,8 @@ const MarkerDetectionVisualizer = ({ onFourMarkersDetected }) => {
       dstTri.delete();
     };
 
-    const getMarkerCenter = (marker) => {
-      const sum = marker.corners.reduce(
-        (acc, corner) => ({ x: acc.x + corner.x, y: acc.y + corner.y }),
-        { x: 0, y: 0 },
-      );
-
-      return {
-        x: sum.x / marker.corners.length,
-        y: sum.y / marker.corners.length,
-      };
-    };
-
-    const orderMarkersForDocument = (markers) => {
-      if (!markers || markers.length < 4) return null;
-
-      const centers = markers.map((marker) => ({
-        marker,
-        center: getMarkerCenter(marker),
-      }));
-
-      centers.sort((a, b) => a.center.x - b.center.x);
-
-      const leftMarkers = centers
-        .slice(0, 2)
-        .sort((a, b) => a.center.y - b.center.y);
-      const rightMarkers = centers
-        .slice(2)
-        .sort((a, b) => a.center.y - b.center.y);
-
-      return [
-        leftMarkers[0].marker,
-        rightMarkers[0].marker,
-        rightMarkers[1].marker,
-        leftMarkers[1].marker,
-      ];
-    };
-
-    const getDocumentCorner = (marker, position) => {
-      const cornerIndexMap = {
-        topLeft: 3,
-        topRight: 0,
-        bottomRight: 2,
-        bottomLeft: 1,
-      };
-
-      const corner = marker?.corners?.[cornerIndexMap[position]];
-      return corner ? [corner.x, corner.y] : null;
-    };
-
     let processed = false;
     let stableFrames = 0;
-
-    const detectMarkersRobustly = () => {
-      const scales = [1, 1.5, 2];
-      const allDetectedMarkers = [];
-
-      console.log("Canvas Size:", canvas.width, canvas.height);
-
-      console.log("Video Size:", video.videoWidth, video.videoHeight);
-
-      scales.forEach((scale) => {
-        const tempCanvas = document.createElement("canvas");
-        tempCanvas.width = Math.round(canvas.width * scale);
-        tempCanvas.height = Math.round(canvas.height * scale);
-
-        const tempContext = tempCanvas.getContext("2d");
-        tempContext.drawImage(
-          canvas,
-          0,
-          0,
-          tempCanvas.width,
-          tempCanvas.height,
-        );
-
-        const imageData = tempContext.getImageData(
-          0,
-          0,
-          tempCanvas.width,
-          tempCanvas.height,
-        );
-
-        const detectedMarkers = detector.detect(imageData);
-
-        console.log(`Scale ${scale}:`, detectedMarkers.length);
-        console.log(canvas.toDataURL().slice(0, 50));
-
-        detectedMarkers.forEach((marker) => {
-          const normalizedMarker = {
-            ...marker,
-            corners: marker.corners.map((corner) => ({
-              x: corner.x / scale,
-              y: corner.y / scale,
-            })),
-          };
-
-          allDetectedMarkers.push(normalizedMarker);
-        });
-      });
-
-      const markerMap = new Map();
-      allDetectedMarkers.forEach((marker) => {
-        const existing = markerMap.get(marker.id);
-
-        if (!existing) {
-          markerMap.set(marker.id, marker);
-          return;
-        }
-
-        existing.corners = existing.corners.map((corner, index) => ({
-          x: (corner.x + marker.corners[index].x) / 2,
-          y: (corner.y + marker.corners[index].y) / 2,
-        }));
-      });
-
-      return Array.from(markerMap.values());
-    };
 
     const process = () => {
       if (cancelled) return;
@@ -261,8 +140,6 @@ const MarkerDetectionVisualizer = ({ onFourMarkersDetected }) => {
             return;
           }
 
-          // Use block centers as the 4 corners for the warp — same shape the
-          // existing getWarpedImage() function already expects
           const orderedCorners = [
             [ordered.topLeft.center.x, ordered.topLeft.center.y],
             [ordered.topRight.center.x, ordered.topRight.center.y],
