@@ -6,10 +6,9 @@ import './index.css'
 import App from './App.jsx'
 
 createRoot(document.getElementById('root')).render(
-  <StrictMode>
     <BrowserRouter basename='/ar-tick'>
       <App />
       <Toaster position='top-center' />
     </BrowserRouter>
-  </StrictMode>,
+  ,
 )

@@ -22,34 +22,20 @@ const MarkerDetectionVisualizer = ({ onFourMarkersDetected }) => {
     const canvas = canvasRef.current;
     const context = canvas.getContext("2d");
 
-    // FIX: guards against React StrictMode's double-invoke in dev, which was
-    // causing "AbortError: play() request was interrupted" — if the effect's
-    // cleanup already ran by the time getUserMedia/video.play() resolves, we
-    // stop here instead of wiring up a camera/loop for an unmounted component.
     let cancelled = false;
     let rafId = null;
 
     const startCamera = async () => {
-      console.log("1. startCamera called");
-
       try {
-        console.log("2. Requesting camera permission");
-
         const stream = await navigator.mediaDevices.getUserMedia({
           video: {
             facingMode: "environment",
           },
         });
 
-        console.log("3. Stream received:", stream);
-
         video.srcObject = stream;
 
-        console.log("4. srcObject assigned");
-
         await video.play();
-
-        console.log("5. Video playing");
       } catch (err) {
         console.error("Camera Error", err);
       }
@@ -92,9 +78,6 @@ const MarkerDetectionVisualizer = ({ onFourMarkersDetected }) => {
       cv.imshow(resultCanvas, dst);
       const dataUrl = resultCanvas.toDataURL();
 
-      // FIX: was `console.log("warped image:", getWarpedImage)` — logged the
-      // function itself, not the actual cropped result. Now logs the useful
-      // value (or remove entirely once you've confirmed it works).
       console.log("✅ Warped image ready:", dataUrl.slice(0, 50) + "...");
 
       setCroppedImage(dataUrl);
@@ -163,6 +146,10 @@ const MarkerDetectionVisualizer = ({ onFourMarkersDetected }) => {
       const scales = [1, 1.5, 2];
       const allDetectedMarkers = [];
 
+      console.log("Canvas Size:", canvas.width, canvas.height);
+
+      console.log("Video Size:", video.videoWidth, video.videoHeight);
+
       scales.forEach((scale) => {
         const tempCanvas = document.createElement("canvas");
         tempCanvas.width = Math.round(canvas.width * scale);
@@ -185,6 +172,9 @@ const MarkerDetectionVisualizer = ({ onFourMarkersDetected }) => {
         );
 
         const detectedMarkers = detector.detect(imageData);
+
+        console.log(`Scale ${scale}:`, detectedMarkers.length);
+        console.log(canvas.toDataURL().slice(0, 50));
 
         detectedMarkers.forEach((marker) => {
           const normalizedMarker = {
@@ -218,18 +208,13 @@ const MarkerDetectionVisualizer = ({ onFourMarkersDetected }) => {
     };
 
     const process = () => {
-      if (cancelled) return; // FIX: stop the loop for good once unmounted
+      if (cancelled) return;
 
       if (!video || video.readyState !== 4) {
         rafId = requestAnimationFrame(process);
         return;
       }
 
-      // FIX: the entire body is now wrapped in try/catch. Previously, a
-      // single thrown error anywhere in here (e.g. the `rderedCorners` typo
-      // that used to be here) would silently kill the whole animation loop
-      // forever, with no explanation in the console. Now it logs and keeps
-      // scanning on the next frame instead of freezing.
       try {
         canvas.width = video.videoWidth;
         canvas.height = video.videoHeight;
@@ -268,7 +253,6 @@ const MarkerDetectionVisualizer = ({ onFourMarkersDetected }) => {
           processed = true;
 
           const orderedMarkers = orderMarkersForDocument(selectedMarkers);
-          console.log("Ordered markers:", orderedMarkers);
 
           if (!orderedMarkers) {
             processed = false; // FIX: was left permanently stuck at `true`
@@ -295,15 +279,6 @@ const MarkerDetectionVisualizer = ({ onFourMarkersDetected }) => {
             return;
           }
 
-          // FIX: this was `console.log("order corner=", rderedCorners)` —
-          // `rderedCorners` does not exist anywhere in the file (typo for
-          // `orderedCorners`). That ReferenceError was thrown here on every
-          // successful detection, which killed the animation loop right
-          // before `getWarpedImage()` — the one function that actually uses
-          // the successful detection — ever got called. This was the root
-          // cause of "camera detects markers but nothing happens after."
-          console.log("Ordered corners:", orderedCorners);
-
           context.strokeStyle = "lime";
           context.lineWidth = 3;
           context.beginPath();
@@ -322,11 +297,6 @@ const MarkerDetectionVisualizer = ({ onFourMarkersDetected }) => {
           getWarpedImage(canvas, orderedCorners);
         }
       } catch (err) {
-        // FIX: this catch is new — without it, any future bug in this block
-        // (typo, null reference, OpenCV error, etc.) will again silently
-        // stop the camera loop with zero explanation, and you'll be back to
-        // "detection seems to work but nothing happens." Now it's always
-        // visible in the console immediately.
         console.error("💥 process() crashed on this frame:", err);
       }
 
@@ -334,23 +304,14 @@ const MarkerDetectionVisualizer = ({ onFourMarkersDetected }) => {
     };
 
     startCamera().then(() => {
-      console.log("6. startCamera finished");
-
       if (!cancelled) {
         rafId = requestAnimationFrame(process);
-
-        console.log("7. rafId =", rafId);
       }
     });
 
     return () => {
       cancelled = true;
 
-      // FIX: previously nothing ever cancelled the requestAnimationFrame
-      // loop on unmount — it kept calling itself forever in the background
-      // (harmless once the stream is stopped, since readyState stops
-      // advancing, but it's a real, avoidable leak, especially noticeable
-      // under React StrictMode's mount→unmount→remount in dev).
       if (rafId) {
         cancelAnimationFrame(rafId);
       }
@@ -363,12 +324,6 @@ const MarkerDetectionVisualizer = ({ onFourMarkersDetected }) => {
       console.log(stream);
     };
   }, [onFourMarkersDetected]);
-  // FIX: added onFourMarkersDetected to the dependency array. It's used
-  // inside the effect, and omitting it (as before) is a stale-closure risk
-  // if the parent ever passes a new callback — ESLint's exhaustive-deps rule
-  // would flag this. If the parent doesn't memoize this prop, this may cause
-  // the effect (and camera) to restart on every parent re-render — worth
-  // wrapping the parent's callback in useCallback if that becomes an issue.
 
   return (
     <div className="flex flex-col items-center p-4 max-w-md mx-auto bg-[#f3e8d4] h-[100dvh]">
