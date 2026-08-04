@@ -19,8 +19,8 @@ const MarkerDetectionVisualizer = ({ onFourMarkersDetected }) => {
     }
 
     const cv = window.cv;
-    const AR = window.AR;
-    const detector = new AR.Detector();
+    // const AR = window.AR;
+    // const detector = new AR.Detector();
 
     const video = videoRef.current;
     const canvas = canvasRef.current;
@@ -81,8 +81,8 @@ const MarkerDetectionVisualizer = ({ onFourMarkersDetected }) => {
       resultCanvas.height = height;
       cv.imshow(resultCanvas, dst);
 
-      // TEMP: add right after cv.inRange(...) in cornerBlockDetector.js
-      cv.imshow(canvasRef.current, mask); // shows black/white mask instead of camera feed
+      // // TEMP: add right after cv.inRange(...) in cornerBlockDetector.js
+      // cv.imshow(canvasRef.current, mask); // shows black/white mask instead of camera feed
 
       const dataUrl = resultCanvas.toDataURL();
 
