@@ -13,6 +13,7 @@
   "dependencies": {
     "@heroicons/react": "^2.2.0",
     "@tailwindcss/vite": "^4.1.11",
+    "@techstark/opencv-js": "^5.0.0-release.1",
     "axios": "^1.10.0",
     "framer-motion": "^12.23.5",
     "ngrok": "^5.0.0-beta.2",

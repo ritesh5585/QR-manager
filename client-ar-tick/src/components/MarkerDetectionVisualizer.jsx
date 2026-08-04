@@ -1,4 +1,8 @@
 import React, { useEffect, useRef, useState } from "react";
+import {
+  detectCornerBlocks,
+  orderBlocksForDocument,
+} from "../utils/cornerBlockDetector";
 
 const MarkerDetectionVisualizer = ({ onFourMarkersDetected }) => {
   const videoRef = useRef(null);
@@ -76,6 +80,10 @@ const MarkerDetectionVisualizer = ({ onFourMarkersDetected }) => {
       resultCanvas.width = width;
       resultCanvas.height = height;
       cv.imshow(resultCanvas, dst);
+
+      // TEMP: add right after cv.inRange(...) in cornerBlockDetector.js
+      cv.imshow(canvasRef.current, mask); // shows black/white mask instead of camera feed
+
       const dataUrl = resultCanvas.toDataURL();
 
       console.log("✅ Warped image ready:", dataUrl.slice(0, 50) + "...");
@@ -220,30 +228,24 @@ const MarkerDetectionVisualizer = ({ onFourMarkersDetected }) => {
         canvas.height = video.videoHeight;
         context.drawImage(video, 0, 0, canvas.width, canvas.height);
 
-        const markers = detectMarkersRobustly();
+        // Replace ArUco marker handling with corner-block detection
+        const srcMat = cv.imread(canvas);
+        const blocks = detectCornerBlocks(cv, srcMat);
+        srcMat.delete();
 
-        markers.forEach((marker) => {
+        // draw debug boxes (same idea as before, now using rect instead of marker.corners)
+        blocks.forEach((block) => {
           context.strokeStyle = "red";
           context.lineWidth = 3;
-          context.beginPath();
-          marker.corners.forEach((corner, i) => {
-            const next = marker.corners[(i + 1) % marker.corners.length];
-            context.moveTo(corner.x, corner.y);
-            context.lineTo(next.x, next.y);
-          });
-          context.stroke();
-          context.fillStyle = "yellow";
-          context.font = "20px sans-serif";
-          context.fillText(
-            `ID:${marker.id}`,
-            marker.corners[0].x,
-            marker.corners[0].y - 10,
+          context.strokeRect(
+            block.rect.x,
+            block.rect.y,
+            block.rect.width,
+            block.rect.height,
           );
         });
 
-        const selectedMarkers = markers.slice(0, 4);
-
-        if (selectedMarkers.length >= 4) {
+        if (blocks.length >= 4) {
           stableFrames += 1;
         } else {
           stableFrames = 0;
@@ -252,49 +254,23 @@ const MarkerDetectionVisualizer = ({ onFourMarkersDetected }) => {
         if (stableFrames >= 6 && !processed) {
           processed = true;
 
-          const orderedMarkers = orderMarkersForDocument(selectedMarkers);
-
-          if (!orderedMarkers) {
-            processed = false; // FIX: was left permanently stuck at `true`
+          const ordered = orderBlocksForDocument(blocks);
+          if (!ordered) {
+            processed = false;
             rafId = requestAnimationFrame(process);
             return;
           }
 
+          // Use block centers as the 4 corners for the warp — same shape the
+          // existing getWarpedImage() function already expects
           const orderedCorners = [
-            "topLeft",
-            "topRight",
-            "bottomRight",
-            "bottomLeft",
-          ]
-            .map((position, index) =>
-              getDocumentCorner(orderedMarkers[index], position),
-            )
-            .filter(Boolean);
+            [ordered.topLeft.center.x, ordered.topLeft.center.y],
+            [ordered.topRight.center.x, ordered.topRight.center.y],
+            [ordered.bottomRight.center.x, ordered.bottomRight.center.y],
+            [ordered.bottomLeft.center.x, ordered.bottomLeft.center.y],
+          ];
 
-          if (orderedCorners.length !== 4) {
-            processed = false; // FIX: same reset — otherwise this path also
-            // permanently locks `processed = true` with nothing ever run,
-            // meaning the scanner silently stops trying forever.
-            rafId = requestAnimationFrame(process);
-            return;
-          }
-
-          context.strokeStyle = "lime";
-          context.lineWidth = 3;
-          context.beginPath();
-          orderedCorners.forEach((pt, i) => {
-            const next = orderedCorners[(i + 1) % 4];
-            context.moveTo(pt[0], pt[1]);
-            context.lineTo(next[0], next[1]);
-          });
-          context.stroke();
-
-          console.log(
-            "✅ Stable marker set detected:",
-            orderedMarkers.map((marker) => marker.id).join(", "),
-          );
-
-          getWarpedImage(canvas, orderedCorners);
+          getWarpedImage(canvas, orderedCorners); // unchanged, already OpenCV.js-based
         }
       } catch (err) {
         console.error("💥 process() crashed on this frame:", err);
