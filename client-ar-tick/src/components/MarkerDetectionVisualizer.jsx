@@ -30,6 +30,8 @@ const MarkerDetectionVisualizer = ({ onFourMarkersDetected }) => {
         const stream = await navigator.mediaDevices.getUserMedia({
           video: {
             facingMode: "environment",
+            width: { ideal: 1280 },
+            height: { ideal: 960 }, // comfortably taller than the 540 the ROI needs
           },
         });
 
