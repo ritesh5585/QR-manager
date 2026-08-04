@@ -37,33 +37,52 @@ export const detectSquares = async ({
     // Convert to grayscale
     cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
 
-    console.log(`📐 Cropped image size: ${gray.cols} x ${gray.rows}`);
-    console.log(
-      `📐 ROI needs: x=${roiParams.x}, y=${roiParams.y}, ` +
-        `right edge=${roiParams.x + roiParams.width}, ` +
-        `bottom edge=${roiParams.y + roiParams.height}`,
-    );
+    const roi = {
+      x: Math.round(roiParams.xPct * gray.cols),
+      y: Math.round(roiParams.yPct * gray.rows),
+      width: Math.round(roiParams.widthPct * gray.cols),
+      height: Math.round(roiParams.heightPct * gray.rows),
+    };
 
-    // GUARD: if the hardcoded ROI doesn't fit this image, stop cleanly
-    // instead of letting OpenCV throw an unreadable WASM exception.
-    if (
-      roiParams.x + roiParams.width > gray.cols ||
-      roiParams.y + roiParams.height > gray.rows
-    ) {
+    console.log("📐 Cropped image:", gray.cols, gray.rows);
+    console.log("📐 ROI before clamp:", roi);
+
+    if (roi.x < 0 || roi.y < 0) {
       console.error(
-        `❌ ROI doesn't fit. Image is ${gray.cols}x${gray.rows}, but ROI ` +
-          `needs at least ${roiParams.x + roiParams.width}x${roiParams.y + roiParams.height}. ` +
-          `roiParams are hardcoded pixels — they don't match this camera's resolution.`,
+        `❌ ROI is invalid. Image is ${gray.cols}x${gray.rows}, but ROI origin is ` +
+          `(${roi.x}, ${roi.y}). Check your roiParams values.`,
       );
       return;
     }
 
-    const roiRect = new cv.Rect(
-      roiParams.x,
-      roiParams.y,
-      roiParams.width,
-      roiParams.height,
-    );
+    const maxWidth = gray.cols - roi.x;
+    const maxHeight = gray.rows - roi.y;
+
+    if (roi.width > maxWidth) {
+      console.warn(
+        `⚠️ ROI width exceeds image bounds; clamping from ${roi.width} to ${maxWidth}.`,
+      );
+      roi.width = maxWidth;
+    }
+
+    if (roi.height > maxHeight) {
+      console.warn(
+        `⚠️ ROI height exceeds image bounds; clamping from ${roi.height} to ${maxHeight}.`,
+      );
+      roi.height = maxHeight;
+    }
+
+    if (roi.width <= 0 || roi.height <= 0) {
+      console.error(
+        `❌ ROI has non-positive dimensions after clamping. ` +
+          `Calculated ROI: ${JSON.stringify(roi)}.`,
+      );
+      return;
+    }
+
+    console.log("📐 ROI after clamp:", roi);
+
+    const roiRect = new cv.Rect(roi.x, roi.y, roi.width, roi.height);
 
     const roiGray = gray.roi(roiRect);
     const roiBlurred = new cv.Mat();
@@ -111,8 +130,8 @@ export const detectSquares = async ({
       if (approx.rows === 4) {
         const rect = cv.boundingRect(cnt);
         const adjustedRect = {
-          x: rect.x + roiParams.x,
-          y: rect.y + roiParams.y,
+          x: rect.x + roi.x,
+          y: rect.y + roi.y,
           width: rect.width,
           height: rect.height,
         };

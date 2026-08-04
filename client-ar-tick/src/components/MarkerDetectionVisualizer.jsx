@@ -47,8 +47,8 @@ const MarkerDetectionVisualizer = ({ onFourMarkersDetected }) => {
       const srcMat = cv.imread(srcCanvas);
       const srcTri = cv.matFromArray(4, 1, cv.CV_32FC2, corners.flat());
 
-      const width = video.videoWidth;
-      const height = video.videoHeight;
+      const width = 480; // portrait — matches your actual card's proportions
+      const height = 800; // adjust these two based on your card's real aspect ratio
 
       const dstTri = cv.matFromArray(4, 1, cv.CV_32FC2, [
         0,

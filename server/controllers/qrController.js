@@ -213,7 +213,7 @@ export async function allQRsList(req, res) {
             id: creatorUser?.id || null,
           },
         };
-      })
+      }),
     );
 
     res.status(200).json(enrichedQRs);
@@ -225,9 +225,11 @@ export async function allQRsList(req, res) {
 
 // assign doctor
 export async function assignQRDetails(req, res) {
+
   try {
     const { qrId } = req.params;
     const details = req.body;
+    console.log(details)
 
     const qr = await QR.findOne({ qrId });
     if (!qr) return res.status(404).json({ error: "QR not found" });
@@ -304,7 +306,7 @@ export async function generateVCard(req, res) {
 
     res.setHeader(
       "Content-Disposition",
-      `attachment; filename=${safeName}.vcf`
+      `attachment; filename=${safeName}.vcf`,
     );
     res.setHeader("Content-Type", "text/x-vcard; charset=utf-8");
     res.status(200).send(vCard);
