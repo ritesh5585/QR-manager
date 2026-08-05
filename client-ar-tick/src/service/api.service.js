@@ -1,8 +1,14 @@
-import axios from 'axios';
+import axios from "axios";
 
-const api = axios.create({
-    baseURL: 'http:',
-    withCredentials: true, 
-})
+export const api = axios.create({
+  baseURL: import.meta.env.VITE_API_URL,
+});
 
-api.get('')
+export const assignQR = async (qrId, checkedSquares) => {
+  return (await api.patch(`/qr/assign/${qrId}`, { checkedSquares })).data;
+};
+
+export const qrDetails = async (qrId) => {
+  return (await api.get(`/qr/details/${qrId}`)).data;
+};
+

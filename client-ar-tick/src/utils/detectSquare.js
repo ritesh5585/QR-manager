@@ -1,4 +1,4 @@
-import axios from "axios";
+import { assignQR } from "../service/api.service";
 import { toast } from "react-hot-toast";
 
 const getSquareNumber = (y, roiHeight) => {
@@ -29,6 +29,8 @@ export const detectSquares = async ({
   const blurred = new cv.Mat();
   const thresh = new cv.Mat();
   const morphed = new cv.Mat();
+  const contours = new cv.MatVector();
+  const hierarchy = new cv.Mat();
 
   try {
     cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
@@ -322,10 +324,7 @@ export const detectSquares = async ({
 
     if (checkedSquares.length > 0) {
       try {
-        await axios.patch(
-          `${import.meta.env.VITE_API_URL}/qr/assign/${qrId}`,
-          checkedSquares,
-        );
+        await assignQR(qrId, checkedSquares);
         toast.success(
           `Found ${checkedSquares.length} square(s) - QR assigned successfully`,
           { id: "success" },
