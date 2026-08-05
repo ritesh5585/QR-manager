@@ -89,7 +89,7 @@ function App() {
 
         {/* Unauthorized route */}
         <Route
-          path="/unauthorized"
+          path="/*"
           element={(
             <div className="flex flex-col items-center justify-center min-h-[100dvh] bg-gray-100 text-gray-800 px-4">
               <h1 className="text-xl md:text-xl lg:text-4xl font-bold mb-4">401 - Unauthorized</h1>

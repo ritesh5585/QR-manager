@@ -11,10 +11,6 @@ const SquareDetector = ({ qrId, scannedImage }) => {
   const [imageURL, setImageURL] = useState(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
 
-  // ----------------------------
-  // Detection Parameters
-  // ----------------------------
-
   const detectionParams = {
     blockSize: 31,
     C: 6,
@@ -24,20 +20,12 @@ const SquareDetector = ({ qrId, scannedImage }) => {
     aspectRatioTolerance: 0.4,
   };
 
-  // ----------------------------
-  // ROI (Percentage Based)
-  // ----------------------------
-
   const roiParams = {
     xPct: 0.07,
     yPct: 0.583,
     widthPct: 0.086,
     heightPct: 0.542,
   };
-
-  // ----------------------------
-  // Checkbox Content
-  // ----------------------------
 
   const squareContent = {
     1: {
@@ -54,10 +42,6 @@ const SquareDetector = ({ qrId, scannedImage }) => {
     },
   };
 
-  // ----------------------------
-  // Prepare Image URL
-  // ----------------------------
-
   useEffect(() => {
     if (!scannedImage) return;
 
@@ -73,10 +57,6 @@ const SquareDetector = ({ qrId, scannedImage }) => {
     }
   }, [scannedImage]);
 
-  // ----------------------------
-  // Wait until OpenCV is Ready
-  // ----------------------------
-
   useEffect(() => {
     if (window.cv?.Mat) {
       console.log("✅ OpenCV Ready");
@@ -86,10 +66,6 @@ const SquareDetector = ({ qrId, scannedImage }) => {
 
     console.error("❌ OpenCV not loaded");
   }, []);
-
-  // ----------------------------
-  // Start Detection
-  // ----------------------------
 
   const handleDetectSquares = async () => {
     if (!cvReady) return;
@@ -114,11 +90,7 @@ const SquareDetector = ({ qrId, scannedImage }) => {
       setIsModalOpen,
     });
   };
-
-  // ----------------------------
-  // Detect only after image loads
-  // ----------------------------
-
+  
   useEffect(() => {
     if (cvReady && imageURL) {
       handleDetectSquares();

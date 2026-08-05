@@ -225,11 +225,10 @@ export async function allQRsList(req, res) {
 
 // assign doctor
 export async function assignQRDetails(req, res) {
-
   try {
     const { qrId } = req.params;
     const details = req.body;
-    console.log(details)
+    console.log("details from assignQrDetails", details);
 
     const qr = await QR.findOne({ qrId });
     if (!qr) return res.status(404).json({ error: "QR not found" });

@@ -1,12 +1,12 @@
-import { useState, useRef, useEffect } from 'react';
-import { toast } from 'react-hot-toast';
-import { useAuth } from '../contexts/AuthContext';
-import axios from 'axios';
-import { useNavigate, useLocation } from 'react-router-dom';
+import { useState, useRef, useEffect } from "react";
+import { toast } from "react-hot-toast";
+import { useAuth } from "../contexts/AuthContext";
+import axios from "axios";
+import { useNavigate, useLocation } from "react-router-dom";
 
 export default function Login() {
-  const [userId, setUserId] = useState('');
-  const [password, setPassword] = useState('');
+  const [userId, setUserId] = useState("");
+  const [password, setPassword] = useState("");
   const userIdRef = useRef(null);
   const { login } = useAuth();
   const navigate = useNavigate();
@@ -20,34 +20,41 @@ export default function Login() {
   const handleLogin = async (e) => {
     e.preventDefault();
     if (!userId || !password) {
-      toast.error('Please enter both User ID and Password', {id: "validation-error"});
+      toast.error("Please enter both User ID and Password", {
+        id: "validation-error",
+      });
       return;
     }
 
     try {
-      const response = await axios.post(`${import.meta.env.VITE_API_URL}/login`, {
-      id: userId,
-      password: password,
-      });
+      const response = await axios.post(
+        `${import.meta.env.VITE_API_URL}/login`,
+        {
+          id: userId,
+          password: password,
+        },
+      );
 
       const data = response.data;
       login(data.user);
-      const redirectUrl = (data.user.role === "admin") ? "/admin/dashboard" : "/dashboard" ;
+      const redirectUrl =
+        data.user.role === "admin" ? "/admin/dashboard" : "/dashboard";
       const from = location.state?.from || redirectUrl;
-      toast.success('Login successful!', { id: "login-success" });
+      toast.success("Login successful!", { id: "login-success" });
       // clear the manual logout item from local storage if present
       localStorage.removeItem("isManualLogout");
       // navigate to final url
-      navigate(from,  { replace: true });
+      navigate(from, { replace: true });
     } catch (error) {
       if (error.response?.status === 401) {
-        toast.error('Invalid credentials', { id: "login-failed" });
+        toast.error("Invalid credentials", { id: "login-failed" });
       } else {
-        toast.error('Something went wrong! Please try again', { id: "login-failed" });
+        toast.error("Something went wrong! Please try again", {
+          id: "login-failed",
+        });
       }
     }
   };
-
 
   return (
     <div className="min-h-[100dvh] bg-gradient-to-tr from-white to-blue-100 flex items-center justify-center px-4">
@@ -58,11 +65,16 @@ export default function Login() {
 
         <form onSubmit={handleLogin} className="space-y-5">
           <div>
-            <label htmlFor='userId' className="block mb-1 text-sm font-medium text-gray-700">User ID</label>
+            <label
+              htmlFor="userId"
+              className="block mb-1 text-sm font-medium text-gray-700"
+            >
+              User ID
+            </label>
             <input
               ref={userIdRef}
               type="text"
-              id='userId'
+              id="userId"
               value={userId}
               onChange={(e) => setUserId(e.target.value)}
               placeholder="Enter your User ID"
@@ -71,7 +83,12 @@ export default function Login() {
           </div>
 
           <div>
-            <label htmlFor='password' className="block mb-1 text-sm font-medium text-gray-700">Password</label>
+            <label
+              htmlFor="password"
+              className="block mb-1 text-sm font-medium text-gray-700"
+            >
+              Password
+            </label>
             <input
               type="password"
               id="password"
