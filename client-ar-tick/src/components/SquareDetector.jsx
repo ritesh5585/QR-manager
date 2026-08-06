@@ -1,5 +1,5 @@
 // ============================================
-// FILE: components/SquareDetector.jsx
+// FILE: components/SquareDetector.jsx (FIXED)
 // ============================================
 
 import React, { useEffect, useRef, useState } from "react";
@@ -39,6 +39,12 @@ const SquareDetector = ({ qrId, scannedImage }) => {
       toast.error("Failed to load OpenCV library");
     };
     document.head.appendChild(script);
+
+    return () => {
+      if (script.parentNode) {
+        script.parentNode.removeChild(script);
+      }
+    };
   }, []);
 
   const processImage = async () => {
@@ -51,7 +57,8 @@ const SquareDetector = ({ qrId, scannedImage }) => {
     console.log("🚀 Processing image...");
 
     try {
-      await detectSquares({
+      // FIXED: Don't double-handle errors - detectSquares handles its own UI
+      const result = await detectSquares({
         cv: window.cv,
         imgRef,
         qrId,
@@ -62,10 +69,13 @@ const SquareDetector = ({ qrId, scannedImage }) => {
           console.log("🔍 Debug:", info);
         },
       });
+
+      // Log the result for debugging
+      console.log("📊 Detection result:", result);
     } catch (error) {
-      console.error("❌ Detection failed:", error);
-      toast.error("Detection failed: " + error.message);
-      setIsModalOpen(true);
+      // This should only catch unexpected errors, not normal flow
+      console.error("❌ Unexpected error in SquareDetector:", error);
+      // Don't open modal or toast here - detectSquares already handled it
     } finally {
       setIsProcessing(false);
     }
@@ -121,12 +131,14 @@ const SquareDetector = ({ qrId, scannedImage }) => {
         <div className="fixed bottom-4 left-4 right-4 max-h-[60vh] overflow-y-auto bg-black/95 p-4 rounded-lg text-white font-mono text-xs z-40 shadow-2xl border border-green-500/30">
           <div className="flex justify-between items-center sticky top-0 bg-black pb-2">
             <h3 className="text-green-400 font-bold">🔍 Detection Debug</h3>
-            <button
-              onClick={() => setShowDebug(false)}
-              className="text-gray-400 hover:text-white"
-            >
-              ✕
-            </button>
+            <div className="flex gap-2">
+              <button
+                onClick={() => setShowDebug(false)}
+                className="text-gray-400 hover:text-white"
+              >
+                ✕
+              </button>
+            </div>
           </div>
 
           <div className="space-y-1 mt-2">
