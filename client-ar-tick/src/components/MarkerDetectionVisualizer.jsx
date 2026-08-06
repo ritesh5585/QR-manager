@@ -17,7 +17,7 @@ const MarkerDetectionVisualizer = ({ onFourMarkersDetected }) => {
       );
       return;
     }
-    
+
     const cv = window.cv;
     const video = videoRef.current;
     const canvas = canvasRef.current;

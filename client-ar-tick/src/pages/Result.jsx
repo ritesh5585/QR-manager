@@ -11,8 +11,7 @@ const Result = () => {
   const [error, setError] = useState(null);
 
   useEffect(() => {
-    
-// axios calling ============================================
+    // axios calling ============================================
     const fetchQRDetails = async () => {
       try {
         const response = await axios.get(
@@ -25,7 +24,7 @@ const Result = () => {
         setLoading(false);
       }
     };
-// =============================================================
+    // =============================================================
 
     fetchQRDetails();
   }, [qrId]);

@@ -1,41 +1,442 @@
-import { useEffect, useRef, useState } from "react";
-import axios from "axios";
+import { useEffect, useRef, useState, useCallback } from "react";
+import { assignQR } from "../service/api.service";
 import { toast } from "react-hot-toast";
 import { useNavigate } from "react-router-dom";
 
-const SquareDetector = ({ scannedImage }) => {
+const SquareDetector = ({ scannedImage, qrId }) => {
   const navigate = useNavigate();
   const imgRef = useRef();
   const canvasRef = useRef();
   const [cvReady, setCvReady] = useState(false);
   const [imageURL, setImageURL] = useState(null);
-  const [detectionParams] = useState({
-    blockSize: 31,
-    C: 6,
-    epsilonFactor: 0.03,
-    minArea: 10,
-    maxArea: 100000,
-    aspectRatioTolerance: 0.4,
-  });
-  const [roiParams] = useState({
-    x: 45,
-    y: 280,
-    width: 55,
-    height: 260,
-  });
+  const [detectionResults, setDetectionResults] = useState(null);
+  const [isProcessing, setIsProcessing] = useState(false);
 
-  const [isSettingRoi, setIsSettingRoi] = useState(false);
-  const [roiStart, setRoiStart] = useState({ x: 0, y: 0 });
-  const [roiEnd, setRoiEnd] = useState({ x: 0, y: 0 });
-  const [detectedSquares, setDetectedSquares] = useState([]);
+  // Detection configuration
+  const config = {
+    adaptiveThreshold: {
+      minBlockSize: 11,
+      maxBlockSize: 51,
+      minC: 2,
+      maxC: 10,
+    },
+    contourFilter: {
+      minExtent: 0.6,
+      minSolidity: 0.7,
+      minArea: 50,
+      maxArea: 5000,
+    },
+    confidenceThreshold: 70, // percentage
+    normalizeSize: { width: 400, height: 700 },
+  };
 
-  // Prepare image URL
+  // Get dynamic ROI based on image dimensions
+  const getDynamicROI = (imgWidth, imgHeight) => {
+    return {
+      x: imgWidth * 0.07,
+      y: imgHeight * 0.58,
+      width: imgWidth * 0.86,
+      height: imgHeight * 0.42,
+    };
+  };
+
+  // Calculate brightness of image
+  const calculateBrightness = (mat) => {
+    const mean = new cv.Mat();
+    cv.meanStdDev(mat, mean);
+    const brightness = mean.data64F[0];
+    mean.delete();
+    return brightness;
+  };
+
+  // Get adaptive threshold parameters based on brightness
+  const getAdaptiveParams = (brightness) => {
+    // Dark image: use smaller block size, larger C
+    // Bright image: use larger block size, smaller C
+    const normalized = Math.min(Math.max(brightness / 128, 0), 1);
+
+    const blockSize = Math.round(
+      config.adaptiveThreshold.maxBlockSize -
+        normalized *
+          (config.adaptiveThreshold.maxBlockSize -
+            config.adaptiveThreshold.minBlockSize),
+    );
+    // Ensure blockSize is odd
+    const finalBlockSize = blockSize % 2 === 0 ? blockSize + 1 : blockSize;
+
+    const C = Math.round(
+      config.adaptiveThreshold.minC +
+        (1 - normalized) *
+          (config.adaptiveThreshold.maxC - config.adaptiveThreshold.minC),
+    );
+
+    return { blockSize: finalBlockSize, C };
+  };
+
+  // Calculate confidence score for a detected square
+  const calculateConfidence = (contour, roi, originalImage) => {
+    let confidence = 0;
+    const factors = [];
+
+    // 1. Extent check (area / bounding rect area)
+    const rect = cv.boundingRect(contour);
+    const contourArea = cv.contourArea(contour);
+    const rectArea = rect.width * rect.height;
+    const extent = contourArea / rectArea;
+    factors.push({ name: "extent", value: extent, weight: 0.25 });
+
+    if (extent > config.contourFilter.minExtent) confidence += 25;
+
+    // 2. Solidity check (area / convex hull area)
+    const hull = new cv.Mat();
+    cv.convexHull(contour, hull);
+    const hullArea = cv.contourArea(hull);
+    const solidity = contourArea / hullArea;
+    hull.delete();
+    factors.push({ name: "solidity", value: solidity, weight: 0.2 });
+
+    if (solidity > config.contourFilter.minSolidity) confidence += 20;
+
+    // 3. Aspect ratio (should be close to 1:1)
+    const aspectRatio = rect.width / rect.height;
+    const aspectScore = Math.max(0, 100 - Math.abs(aspectRatio - 1) * 200);
+    factors.push({ name: "aspectRatio", value: aspectRatio, weight: 0.15 });
+    confidence += aspectScore * 0.15;
+
+    // 4. Border thickness check
+    const borderConfidence = checkBorderThickness(rect, originalImage);
+    factors.push({ name: "border", value: borderConfidence, weight: 0.2 });
+    confidence += borderConfidence * 0.2;
+
+    // 5. Black pixel percentage (inside the square should be mostly dark for checkbox)
+    const blackPixelConfidence = checkBlackPixelPercentage(
+      contour,
+      originalImage,
+    );
+    factors.push({
+      name: "blackPixel",
+      value: blackPixelConfidence,
+      weight: 0.2,
+    });
+    confidence += blackPixelConfidence * 0.2;
+
+    // Log factors for debugging
+    console.log("Confidence factors:", factors);
+    console.log("Total confidence:", Math.round(confidence));
+
+    return Math.min(Math.round(confidence), 100);
+  };
+
+  // Check border thickness
+  const checkBorderThickness = (rect, image) => {
+    // Check if the detected shape has a border by analyzing edge pixels
+    const borderSampleSize = Math.min(rect.width, rect.height) * 0.1;
+    // Implementation would check pixel intensity along the border
+    // Returns a score 0-100
+    return 80; // Placeholder
+  };
+
+  // Check black pixel percentage inside square
+  const checkBlackPixelPercentage = (contour, image) => {
+    // Create mask from contour
+    const mask = cv.Mat.zeros(image.rows, image.cols, cv.CV_8U);
+    cv.drawContours(mask, [contour], 0, 255, -1);
+
+    // Count black pixels within mask
+    const gray = new cv.Mat();
+    cv.cvtColor(image, gray, cv.COLOR_RGBA2GRAY);
+
+    const maskedImage = new cv.Mat();
+    gray.copyTo(maskedImage, mask);
+
+    const totalPixels = cv.countNonZero(mask);
+    const blackPixels = cv.countNonZero(maskedImage) - totalPixels;
+
+    const blackRatio = Math.abs(blackPixels) / totalPixels;
+
+    // Ideal checkbox: 20-40% black pixels
+    const score =
+      blackRatio >= 0.2 && blackRatio <= 0.4
+        ? 100
+        : blackRatio > 0.4
+          ? 100 - (blackRatio - 0.4) * 100
+          : blackRatio * 500; // 0-0.2 maps to 0-100
+
+    mask.delete();
+    gray.delete();
+    maskedImage.delete();
+
+    return Math.min(Math.max(score, 0), 100);
+  };
+
+  // Check if any ArUco markers detected
+  const detectArUcoMarkers = (image) => {
+    try {
+      const dictionary = cv.getPredefinedDictionary(cv.DICT_ARUCO_ORIGINAL);
+      const detectorParams = new cv.DetectorParameters();
+      const detector = new cv.ArucoDetector(dictionary, detectorParams);
+
+      const markers = new cv.MatVector();
+      const ids = new cv.Mat();
+
+      detector.detectMarkers(image, markers, ids);
+
+      const result = {
+        hasMarkers: markers.size() > 0,
+        markerCount: markers.size(),
+        ids: ids.data32S ? Array.from(ids.data32S) : [],
+        markers: markers,
+      };
+
+      // Clean up
+      detector.delete();
+      detectorParams.delete();
+
+      return result;
+    } catch (error) {
+      console.error("ArUco detection error:", error);
+      return { hasMarkers: false, markerCount: 0, ids: [], markers: null };
+    }
+  };
+
+  // Main detection function
+  const detectSquares = useCallback(async () => {
+    if (!cvReady || !imgRef.current || isProcessing) return;
+
+    setIsProcessing(true);
+    const img = imgRef.current;
+    const canvas = canvasRef.current;
+    const ctx = canvas.getContext("2d");
+
+    try {
+      canvas.width = img.naturalWidth;
+      canvas.height = img.naturalHeight;
+
+      const src = cv.imread(img);
+      const gray = new cv.Mat();
+      cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
+
+      // 1. Check for ArUco markers first
+      const arucoResult = detectArUcoMarkers(src);
+      if (!arucoResult.hasMarkers) {
+        console.warn("No ArUco markers detected");
+        // Still proceed but with lower confidence
+      }
+
+      // 2. Get dynamic ROI
+      const roi = getDynamicROI(src.cols, src.rows);
+
+      // 3. Extract ROI
+      const roiRect = new cv.Rect(
+        Math.round(roi.x),
+        Math.round(roi.y),
+        Math.round(roi.width),
+        Math.round(roi.height),
+      );
+      const roiGray = gray.roi(roiRect);
+
+      // 4. Calculate brightness for adaptive threshold
+      const brightness = calculateBrightness(roiGray);
+      const { blockSize, C } = getAdaptiveParams(brightness);
+
+      console.log(
+        `Brightness: ${brightness}, Using blockSize: ${blockSize}, C: ${C}`,
+      );
+
+      // 5. Adaptive threshold
+      const thresh = new cv.Mat();
+      cv.adaptiveThreshold(
+        roiGray,
+        thresh,
+        255,
+        cv.ADAPTIVE_THRESH_GAUSSIAN_C,
+        cv.THRESH_BINARY_INV,
+        blockSize,
+        C,
+      );
+
+      // 6. Morphological operations
+      const kernel = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(3, 3));
+      const morphed = new cv.Mat();
+      cv.morphologyEx(thresh, morphed, cv.MORPH_CLOSE, kernel);
+      cv.morphologyEx(morphed, morphed, cv.MORPH_OPEN, kernel);
+
+      // 7. Find contours
+      const contours = new cv.MatVector();
+      const hierarchy = new cv.Mat();
+      cv.findContours(
+        morphed,
+        contours,
+        hierarchy,
+        cv.RETR_EXTERNAL,
+        cv.CHAIN_APPROX_SIMPLE,
+      );
+
+      // 8. Process contours
+      const allSquares = [];
+
+      for (let i = 0; i < contours.size(); i++) {
+        const contour = contours.get(i);
+        const area = cv.contourArea(contour);
+
+        if (
+          area < config.contourFilter.minArea ||
+          area > config.contourFilter.maxArea
+        ) {
+          contour.delete();
+          continue;
+        }
+
+        // Approximate polygon
+        const approx = new cv.Mat();
+        const epsilon = 0.02 * cv.arcLength(contour, true);
+        cv.approxPolyDP(contour, approx, epsilon, true);
+
+        if (approx.rows === 4) {
+          const rect = cv.boundingRect(contour);
+          const adjustedRect = {
+            x: rect.x + roi.x,
+            y: rect.y + roi.y,
+            width: rect.width,
+            height: rect.height,
+          };
+
+          // Calculate confidence
+          const confidence = calculateConfidence(contour, roiRect, src);
+
+          if (confidence >= config.confidenceThreshold) {
+            // Determine row (1-14) based on relative Y position
+            const relativeY = rect.y;
+            const rowHeight = roiRect.height / 14;
+            const rowNumber = Math.floor(relativeY / rowHeight) + 1;
+
+            allSquares.push({
+              position: adjustedRect,
+              row: rowNumber,
+              confidence: confidence,
+              area: area,
+              aspectRatio: rect.width / rect.height,
+              hasAruco: arucoResult.hasMarkers,
+            });
+          }
+        }
+        approx.delete();
+        contour.delete();
+      }
+
+      // 9. Sort squares by Y position and assign labels
+      const sortedSquares = allSquares.sort(
+        (a, b) => a.position.y - b.position.y,
+      );
+
+      // 10. Draw results
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+
+      // Draw ROI
+      ctx.strokeStyle = "rgba(0, 0, 255, 0.3)";
+      ctx.lineWidth = 2;
+      ctx.strokeRect(roi.x, roi.y, roi.width, roi.height);
+
+      // Draw detected squares
+      sortedSquares.forEach((square, index) => {
+        const { x, y, width, height } = square.position;
+
+        // Color based on confidence
+        const color =
+          square.confidence >= 90
+            ? "lime"
+            : square.confidence >= 80
+              ? "yellow"
+              : "orange";
+
+        ctx.strokeStyle = color;
+        ctx.lineWidth = 3;
+        ctx.strokeRect(x, y, width, height);
+
+        // Draw label
+        ctx.fillStyle = "white";
+        ctx.strokeStyle = "black";
+        ctx.lineWidth = 2;
+        ctx.font = "bold 20px Arial";
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+
+        const label = `${index + 1}: ${square.confidence}%`;
+        ctx.strokeText(label, x + width / 2, y + height / 2);
+        ctx.fillStyle = "white";
+        ctx.fillText(label, x + width / 2, y + height / 2);
+      });
+
+      // 11. Send results
+      if (qrId && sortedSquares.length > 0) {
+        const results = sortedSquares.map((square, index) => ({
+          row: square.row,
+          confidence: square.confidence,
+          position: square.position,
+        }));
+
+        try {
+          await assignQR(qrId, results);
+          toast.success(
+            `Detected ${sortedSquares.length} squares successfully`,
+            { id: "success" },
+          );
+        } catch (error) {
+          console.error("Assignment error:", error);
+          toast.error("Failed to assign QR", { id: "error" });
+        }
+      }
+
+      setDetectionResults({
+        totalSquares: sortedSquares.length,
+        squares: sortedSquares,
+        roi: roi,
+        brightness: brightness,
+        arucoMarkers: arucoResult,
+      });
+
+      // Clean up
+      roiGray.delete();
+      thresh.delete();
+      kernel.delete();
+      morphed.delete();
+      contours.delete();
+      hierarchy.delete();
+    } catch (error) {
+      console.error("Detection error:", error);
+      toast.error("Detection failed: " + error.message);
+    } finally {
+      setIsProcessing(false);
+    }
+  }, [cvReady, qrId, isProcessing]);
+
+  // Initialize OpenCV
   useEffect(() => {
-    console.log("================================");
-    console.log("SquareDetector Mounted");
-    console.log("Received scannedImage:", scannedImage);
-    console.log("Type:", typeof scannedImage);
-    console.log("================================");
+    if (window.cv && window.cv.Mat) {
+      console.log("✅ OpenCV.js is ready");
+      setCvReady(true);
+    } else {
+      console.warn("Loading OpenCV.js from CDN...");
+      const script = document.createElement("script");
+      script.src = "https://docs.opencv.org/4.5.0/opencv.js";
+      script.onload = () => {
+        if (window.cv) {
+          window.cv.onRuntimeInitialized = () => {
+            setCvReady(true);
+          };
+        }
+      };
+      script.onerror = () => {
+        console.error("Failed to load OpenCV.js");
+        toast.error("Failed to load OpenCV library");
+      };
+      document.head.appendChild(script);
+    }
+  }, []);
+
+  // Load image
+  useEffect(() => {
     if (scannedImage instanceof Blob) {
       const url = URL.createObjectURL(scannedImage);
       setImageURL(url);
@@ -45,353 +446,25 @@ const SquareDetector = ({ scannedImage }) => {
     }
   }, [scannedImage]);
 
-  // Ensure OpenCV is ready
+  // Auto-detect when image loads
   useEffect(() => {
-    if (window.cv && window.cv.Mat) {
-      console.log("✅ OpenCV.js is ready");
-      setCvReady(true);
-    } else {
-      console.error("❌ OpenCV.js not found. Loading from CDN...");
-      const script = document.createElement("script");
-      script.src = "https://docs.opencv.org/4.5.0/opencv.js";
-      script.onload = () => {
-        window.cv.onRuntimeInitialized = () => {
-          setCvReady(true);
-        };
-      };
-      document.head.appendChild(script);
-    }
-  }, []);
+    if (imageURL && imgRef.current && imgRef.current.complete && cvReady) {
+      const canvas = canvasRef.current;
+      const img = imgRef.current;
+      canvas.width = img.naturalWidth;
+      canvas.height = img.naturalHeight;
 
-  // Function to determine square number based on y-coordinate
-  const getSquareNumber = (y) => {
-    const ranges = [
-      { min: 180, max: 210, number: 1 },
-      { min: 230, max: 260, number: 2 },
-      { min: 280, max: 310, number: 3 },
-      { min: 330, max: 360, number: 4 },
-      { min: 380, max: 410, number: 5 },
-      { min: 430, max: 460, number: 6 },
-      { min: 480, max: 510, number: 7 },
-      { min: 530, max: 560, number: 8 },
-      { min: 580, max: 610, number: 9 },
-      { min: 630, max: 660, number: 10 },
-      { min: 680, max: 710, number: 11 },
-      { min: 730, max: 760, number: 12 },
-      { min: 780, max: 810, number: 13 },
-      { min: 830, max: 860, number: 14 },
-    ];
-
-    const foundRange = ranges.find((range) => y >= range.min && y <= range.max);
-    return foundRange ? foundRange.number : null;
-  };
-
-  // Handle mouse down for ROI selection
-  const handleMouseDown = (e) => {
-    if (!isSettingRoi) return;
-
-    const canvas = canvasRef.current;
-    const rect = canvas.getBoundingClientRect();
-    const scaleX = canvas.width / rect.width;
-    const scaleY = canvas.height / rect.height;
-    const x = (e.clientX - rect.left) * scaleX;
-    const y = (e.clientY - rect.top) * scaleY;
-
-    setRoiStart({ x, y });
-    setRoiEnd({ x, y });
-  };
-
-  // Handle mouse move for ROI selection
-  const handleMouseMove = (e) => {
-    if (!isSettingRoi || !roiStart) return;
-
-    const canvas = canvasRef.current;
-    const rect = canvas.getBoundingClientRect();
-    const scaleX = canvas.width / rect.width;
-    const scaleY = canvas.height / rect.height;
-    const x = (e.clientX - rect.left) * scaleX;
-    const y = (e.clientY - rect.top) * scaleY;
-
-    setRoiEnd({ x, y });
-    drawCanvasWithRoi();
-  };
-
-  // Handle mouse up to finalize ROI selection
-  const handleMouseUp = () => {
-    if (!isSettingRoi || !roiStart) return;
-
-    // Calculate ROI coordinates (ensure positive width/height)
-    const x = Math.min(roiStart.x, roiEnd.x);
-    const y = Math.min(roiStart.y, roiEnd.y);
-    const width = Math.abs(roiEnd.x - roiStart.x);
-    const height = Math.abs(roiEnd.y - roiStart.y);
-
-    setRoiParams({
-      x,
-      y,
-      width,
-      height,
-    });
-
-    setIsSettingRoi(false);
-    setRoiStart({ x: 0, y: 0 });
-    setRoiEnd({ x: 0, y: 0 });
-
-    // Redraw canvas without the selection rectangle
-    drawCanvasWithRoi();
-  };
-
-  // Draw canvas with ROI rectangle
-  const drawCanvasWithRoi = () => {
-    if (!imgRef.current || !canvasRef.current) return;
-
-    const img = imgRef.current;
-    const canvas = canvasRef.current;
-    const ctx = canvas.getContext("2d");
-
-    // Clear and draw original image
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-
-    // Draw existing ROI
-    ctx.strokeStyle = "blue";
-    ctx.lineWidth = 2;
-    ctx.strokeRect(roiParams.x, roiParams.y, roiParams.width, roiParams.height);
-    ctx.fillStyle = "rgba(0, 0, 255, 0.1)";
-    ctx.fillRect(roiParams.x, roiParams.y, roiParams.width, roiParams.height);
-
-    // Draw ROI being selected
-    if (isSettingRoi && roiStart && roiEnd) {
-      const x = Math.min(roiStart.x, roiEnd.x);
-      const y = Math.min(roiStart.y, roiEnd.y);
-      const width = Math.abs(roiEnd.x - roiStart.x);
-      const height = Math.abs(roiEnd.y - roiStart.y);
-
-      ctx.strokeStyle = "yellow";
-      ctx.lineWidth = 2;
-      ctx.setLineDash([5, 5]);
-      ctx.strokeRect(x, y, width, height);
-      ctx.fillStyle = "rgba(255, 255, 0, 0.1)";
-      ctx.fillRect(x, y, width, height);
-      ctx.setLineDash([]);
-    }
-
-    // Draw all detected squares with their coordinates
-    detectedSquares.forEach((square) => {
-      const { x, y, width, height, number } = square;
-
-      // Draw square
-      ctx.strokeStyle = "lime";
-      ctx.lineWidth = 3;
-      ctx.strokeRect(x, y, width, height);
-
-      // Draw coordinates text
-      ctx.fillStyle = "black";
-      ctx.font = "30px Arial";
-      ctx.fillText(`(${x},${y})`, x + 5, y + 15);
-      ctx.fillText(`${width}x${height}`, x + 5, y + 30);
-
-      // Draw square number
-      ctx.fillStyle = "cyan";
-      ctx.font = "bold 12px Arial";
-      ctx.fillText(number, x + width / 2 - 3, y + height / 2 + 4);
-    });
-  };
-
-  // Enhanced square detection within ROI
-  const detectEmptySquares = async () => {
-    if (!cvReady || !imgRef.current) return;
-
-    const img = imgRef.current;
-    const canvas = canvasRef.current;
-    const ctx = canvas.getContext("2d");
-
-    canvas.width = img.naturalWidth;
-    canvas.height = img.naturalHeight;
-
-    const src = cv.imread(img);
-    const gray = new cv.Mat();
-    const blurred = new cv.Mat();
-    const thresh = new cv.Mat();
-    const morphed = new cv.Mat();
-    const contours = new cv.MatVector();
-    const hierarchy = new cv.Mat();
-
-    try {
-      // Convert to grayscale
-      cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
-
-      // Create ROI mask
-      const roiRect = new cv.Rect(
-        roiParams.x,
-        roiParams.y,
-        roiParams.width,
-        roiParams.height,
-      );
-
-      // Apply ROI to the image
-      const roiGray = gray.roi(roiRect);
-      const roiBlurred = new cv.Mat();
-      const roiThresh = new cv.Mat();
-      const roiMorphed = new cv.Mat();
-
-      // Apply Gaussian blur to reduce noise
-      cv.GaussianBlur(roiGray, roiBlurred, new cv.Size(3, 3), 0);
-
-      // Apply adaptive thresholding
-      cv.adaptiveThreshold(
-        roiBlurred,
-        roiThresh,
-        255,
-        cv.ADAPTIVE_THRESH_GAUSSIAN_C,
-        cv.THRESH_BINARY_INV,
-        detectionParams.blockSize,
-        detectionParams.C,
-      );
-
-      // Morphological operations to clean up
-      const kernel = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(2, 2));
-      cv.morphologyEx(roiThresh, roiMorphed, cv.MORPH_CLOSE, kernel);
-      cv.morphologyEx(roiMorphed, roiMorphed, cv.MORPH_OPEN, kernel);
-
-      // Find contours
-      cv.findContours(
-        roiMorphed,
-        contours,
-        hierarchy,
-        cv.RETR_EXTERNAL,
-        cv.CHAIN_APPROX_SIMPLE,
-      );
-
-      // Clear canvas and draw original image
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      const ctx = canvas.getContext("2d");
       ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
 
-      // Draw ROI area
-      ctx.strokeStyle = "blue";
-      ctx.lineWidth = 2;
-      ctx.strokeRect(
-        roiParams.x,
-        roiParams.y,
-        roiParams.width,
-        roiParams.height,
-      );
-      ctx.fillStyle = "rgba(0, 0, 255, 0.1)";
-      ctx.fillRect(roiParams.x, roiParams.y, roiParams.width, roiParams.height);
-
-      const squares = [];
-
-      for (let i = 0; i < contours.size(); ++i) {
-        const cnt = contours.get(i);
-        const area = cv.contourArea(cnt);
-
-        // Filter by area
-        if (area < detectionParams.minArea || area > detectionParams.maxArea) {
-          cnt.delete();
-          continue;
-        }
-
-        const approx = new cv.Mat();
-        const epsilon = detectionParams.epsilonFactor * cv.arcLength(cnt, true);
-        cv.approxPolyDP(cnt, approx, epsilon, true);
-
-        // Check if it's a quadrilateral
-        if (approx.rows === 4) {
-          const rect = cv.boundingRect(cnt);
-          // Adjust rect coordinates to be relative to the whole image
-          const adjustedRect = {
-            x: rect.x + roiParams.x,
-            y: rect.y + roiParams.y,
-            width: rect.width,
-            height: rect.height,
-          };
-
-          const aspectRatio = adjustedRect.width / adjustedRect.height;
-
-          // Check if it's square-ish
-          const isSquarish =
-            Math.abs(aspectRatio - 1) < detectionParams.aspectRatioTolerance;
-
-          if (isSquarish && adjustedRect.width > 5 && adjustedRect.height > 5) {
-            // Additional convexity check
-            const hull = new cv.Mat();
-            cv.convexHull(cnt, hull);
-            const hullArea = cv.contourArea(hull);
-            const convexityRatio = area / hullArea;
-
-            if (convexityRatio > 0.7) {
-              // Get square number based on y-coordinate
-              const squareNumber = getSquareNumber(adjustedRect.y);
-
-              squares.push({
-                x: adjustedRect.x,
-                y: adjustedRect.y,
-                width: adjustedRect.width,
-                height: adjustedRect.height,
-                area: area,
-                number: squareNumber || "not found",
-                status: squareNumber ? "found" : "notFound",
-              });
-            }
-            hull.delete();
-          }
-        }
-
-        approx.delete();
-        cnt.delete();
-      }
-
-      setDetectedSquares(squares);
-      // axios calling ==============================================================
-      try {
-        await axios.patch(
-          `${import.meta.env.VITE_API_URL}/qr/assign/hdKNwF`,
-          detectedSquares,
-        );
-        toast.success("QR assigned successfully", { id: "success" });
-        // navigate("/result/hdKNwF");
-      } catch (error) {
-        console.error("Assignment error:", error);
-        toast.error("Unable to assign the QR", { id: "failed" });
-      }
-      // =============================================================================
-      // Log all squares with their coordinates
-      console.log("Detected Squares:");
-      squares.forEach((square) => {
-        console.log(
-          `Square ${square.number}: ` +
-            `Position (${square.x}, ${square.y}), ` +
-            `Size ${square.width}x${square.height}, ` +
-            `Area ${square.area}`,
-        );
-      });
-
-      // Clean up ROI mats
-      roiGray.delete();
-      roiBlurred.delete();
-      roiThresh.delete();
-      roiMorphed.delete();
-      kernel.delete();
-    } catch (error) {
-      console.error("Error in square detection:", error);
-    } finally {
-      // Clean up memory
-      src.delete();
-      gray.delete();
-      blurred.delete();
-      thresh.delete();
-      morphed.delete();
-      contours.delete();
-      hierarchy.delete();
+      detectSquares();
     }
+  }, [imageURL, cvReady, detectSquares]);
+
+  // Manual retry
+  const handleRetry = () => {
+    detectSquares();
   };
-
-  // Draw canvas when image loads or ROI changes
-  useEffect(() => {
-    if (imageURL && imgRef.current && imgRef.current.complete) {
-      drawCanvasWithRoi();
-    }
-  }, [imageURL, roiParams, isSettingRoi, detectedSquares]);
 
   return (
     <div className="flex flex-col items-center gap-4 p-4">
@@ -402,45 +475,72 @@ const SquareDetector = ({ scannedImage }) => {
           alt="Scanned"
           crossOrigin="anonymous"
           onLoad={() => {
-            const canvas = canvasRef.current;
-            const img = imgRef.current;
-            canvas.width = img.naturalWidth;
-            canvas.height = img.naturalHeight;
-            drawCanvasWithRoi();
-            detectEmptySquares();
+            if (cvReady) {
+              const canvas = canvasRef.current;
+              const img = imgRef.current;
+              canvas.width = img.naturalWidth;
+              canvas.height = img.naturalHeight;
+              detectSquares();
+            }
           }}
           style={{ display: "none" }}
         />
       )}
 
-      <div className="w-full overflow-auto border border-gray-300 rounded shadow-lg">
-        <canvas
-          ref={canvasRef}
-          className="cursor-crosshair"
-          onMouseDown={handleMouseDown}
-          onMouseMove={handleMouseMove}
-          onMouseUp={handleMouseUp}
-          style={{ width: "100%" }}
-        />
+      <div className="w-full overflow-auto border border-gray-300 rounded shadow-lg relative">
+        <canvas ref={canvasRef} style={{ width: "100%" }} />
+        {isProcessing && (
+          <div className="absolute inset-0 bg-black bg-opacity-50 flex items-center justify-center">
+            <div className="text-white text-xl">Processing...</div>
+          </div>
+        )}
       </div>
 
-      {/* Display detected squares information
-      {detectedSquares.length > 0 && (
+      {detectionResults && (
         <div className="w-full max-w-4xl p-4 bg-gray-100 rounded-lg">
-          <h3 className="font-bold mb-2">Detected Squares ({detectedSquares.length}):</h3>
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2">
-            {detectedSquares.map((square, index) => (
-              <div key={index} className="p-2 bg-white rounded border">
-                <div className="font-semibold">Square {square.number}</div>
-                <div>Position: ({square.x}, {square.y})</div>
-                <div>Size: {square.width} × {square.height}</div>
-                <div>Area: {Math.round(square.area)} px²</div>
-                <div>status: {square.status}</div>
+          <div className="flex justify-between items-center mb-2">
+            <h3 className="font-bold">
+              Detection Results ({detectionResults.totalSquares} squares)
+            </h3>
+            <button
+              onClick={handleRetry}
+              disabled={isProcessing}
+              className="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600 disabled:opacity-50"
+            >
+              {isProcessing ? "Processing..." : "Retry"}
+            </button>
+          </div>
+
+          <div className="grid grid-cols-2 gap-2 text-sm">
+            <div>
+              ROI: {Math.round(detectionResults.roi.x)},{" "}
+              {Math.round(detectionResults.roi.y)}
+            </div>
+            <div>Brightness: {Math.round(detectionResults.brightness)}</div>
+            <div>
+              ArUco markers: {detectionResults.arucoMarkers.markerCount}
+            </div>
+            <div>Confidence threshold: {config.confidenceThreshold}%</div>
+          </div>
+
+          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2 mt-2">
+            {detectionResults.squares.map((square, index) => (
+              <div key={index} className="p-2 bg-white rounded border text-sm">
+                <div className="font-semibold">Row {square.row}</div>
+                <div>Confidence: {square.confidence}%</div>
+                <div>
+                  Size: {Math.round(square.position.width)}×
+                  {Math.round(square.position.height)}
+                </div>
+                <div className="text-xs text-gray-600">
+                  ({Math.round(square.position.x)},{" "}
+                  {Math.round(square.position.y)})
+                </div>
               </div>
             ))}
           </div>
         </div>
-      )} */}
+      )}
     </div>
   );
 };

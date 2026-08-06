@@ -5,10 +5,10 @@ export const api = axios.create({
 });
 
 export const assignQR = async (qrId, checkedSquares) => {
-  return (await api.patch(`/qr/assign/${qrId}`, { checkedSquares })).data;
+  // send the array/object directly so server can store it as `assignedDetails`
+  return (await api.patch(`/qr/assign/${qrId}`, checkedSquares)).data;
 };
 
 export const qrDetails = async (qrId) => {
   return (await api.get(`/qr/details/${qrId}`)).data;
-};
-
+}; 
