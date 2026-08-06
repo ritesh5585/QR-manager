@@ -1,93 +1,104 @@
 // ============================================
-// FILE: src/utils/detectSquare.js
-// (FIXED VERSION - ONLY RETURNS CHECKED BOXES)
+// FILE: utils/detectSquare.js (FIXED - GLOBAL THRESHOLD)
 // ============================================
 
 import { toast } from "react-hot-toast";
 
-// FIXED MAPPING - Each checkbox has a fixed position and name
+// ✅ FIXED: Proper mapping with correct titles and file types
 const CHECKBOX_MAPPING = {
   1: {
     id: 1,
     title: "i_eat_while_distracted",
     fileType: "mp4",
-    position: { x: 26, y: 455, size: 38 }
+    displayName: "I Eat While Distracted",
+    position: { x: 26, y: 455, size: 38 },
   },
   2: {
     id: 2,
     title: "i_eat_in_a_hurry",
     fileType: "mp4",
-    position: { x: 26, y: 595, size: 38 }
+    displayName: "I Eat In A Hurry",
+    position: { x: 26, y: 595, size: 38 },
   },
   3: {
     id: 3,
     title: "i_eat_mindfully",
     fileType: "jpg",
-    position: { x: 26, y: 735, size: 38 }
-  }
+    displayName: "I Eat Mindfully",
+    position: { x: 26, y: 735, size: 38 },
+  },
 };
 
 const CONFIG = {
   cardWidth: 600,
   cardHeight: 1000,
-  minFillPercentage: 15,
-  maxFillPercentage: 85,
-  confidenceThreshold: 40,
+  margin: 12, // Percentage points above baseline to count as a real mark
 };
 
-const analyzeCheckbox = (cv, checkboxMat) => {
-  let gray = checkboxMat;
-  let needsCleanup = false;
-  
-  if (checkboxMat.channels() > 1) {
-    gray = new cv.Mat();
-    cv.cvtColor(checkboxMat, gray, cv.COLOR_RGBA2GRAY);
-    needsCleanup = true;
-  }
-  
-  const insetX = Math.round(gray.cols * 0.2);
-  const insetY = Math.round(gray.rows * 0.2);
-  const insetW = Math.max(1, gray.cols - insetX * 2);
-  const insetH = Math.max(1, gray.rows - insetY * 2);
-  
-  const innerRoi = new cv.Rect(insetX, insetY, insetW, insetH);
-  const innerMat = gray.roi(innerRoi);
-  
+/**
+ * Compute ONE global threshold from the entire ROI band containing all checkboxes
+ * This is stable because the sample is large enough to have a real bimodal distribution
+ */
+const computeGlobalThreshold = (cv, warped, boxes) => {
+  // Union bounding rect covering all checkbox positions -> one big, stable sample
+  const minX = Math.min(...boxes.map((b) => b.position.x));
+  const minY = Math.min(...boxes.map((b) => b.position.y));
+  const maxX = Math.max(...boxes.map((b) => b.position.x + b.position.size));
+  const maxY = Math.max(...boxes.map((b) => b.position.y + b.position.size));
+
+  const band = warped.roi(new cv.Rect(minX, minY, maxX - minX, maxY - minY));
+  const gray = new cv.Mat();
+  cv.cvtColor(band, gray, cv.COLOR_RGBA2GRAY);
+
   const thresh = new cv.Mat();
-  cv.threshold(innerMat, thresh, 0, 255, cv.THRESH_BINARY_INV + cv.THRESH_OTSU);
-  
-  const totalPixels = thresh.rows * thresh.cols;
-  const blackPixels = cv.countNonZero(thresh);
-  const fillPercentage = (blackPixels / totalPixels) * 100;
-  
-  const isChecked = fillPercentage >= CONFIG.minFillPercentage && 
-                    fillPercentage <= CONFIG.maxFillPercentage;
-  
-  let confidence = 0;
-  if (isChecked) {
-    confidence = Math.min(100, (fillPercentage / 50) * 100);
-  } else {
-    confidence = Math.max(0, 100 - (fillPercentage / 20) * 100);
-  }
-  
-  innerMat.delete();
+  const t = cv.threshold(
+    gray,
+    thresh,
+    0,
+    255,
+    cv.THRESH_BINARY_INV + cv.THRESH_OTSU,
+  );
+
+  // Cleanup
+  gray.delete();
   thresh.delete();
-  if (needsCleanup) gray.delete();
-  
-  return {
-    isChecked,
-    confidence: Math.round(Math.min(Math.max(confidence, 0), 100)),
-    fillPercentage: Math.round(fillPercentage),
-    blackPixels,
-    totalPixels,
-  };
+  band.delete();
+
+  return t; // scalar threshold value, reused for every box
 };
 
+/**
+ * Measure a single checkbox using the global threshold
+ */
+const measureBox = (cv, warped, box, globalThresh) => {
+  const { x, y, size } = box.position;
+  const roi = warped.roi(new cv.Rect(x, y, size, size));
+  const gray = new cv.Mat();
+  cv.cvtColor(roi, gray, cv.COLOR_RGBA2GRAY);
+
+  const bin = new cv.Mat();
+  // Use the GLOBAL threshold, not per-box Otsu
+  cv.threshold(gray, bin, globalThresh, 255, cv.THRESH_BINARY_INV);
+
+  const totalPixels = size * size;
+  const blackPixels = cv.countNonZero(bin);
+  const fillPercentage = (blackPixels / totalPixels) * 100;
+
+  // Cleanup
+  roi.delete();
+  gray.delete();
+  bin.delete();
+
+  return fillPercentage;
+};
+
+/**
+ * MAIN DETECTION FUNCTION - Using global threshold
+ */
 export const detectSquares = async ({
   cv,
   imgRef,
   qrId,
-  squareContent,
   navigate,
   setIsModalOpen,
   onDebug,
@@ -99,7 +110,7 @@ export const detectSquares = async ({
 
   const img = imgRef.current;
   const src = cv.imread(img);
-  
+
   if (src.empty()) {
     console.error("❌ Failed to read image");
     if (setIsModalOpen) setIsModalOpen(true);
@@ -111,52 +122,69 @@ export const detectSquares = async ({
 
   try {
     console.log("📐 Processing image:", src.cols, "x", src.rows);
-    
+
+    // Warp to standard size
     warped = new cv.Mat();
-    cv.resize(src, warped, new cv.Size(CONFIG.cardWidth, CONFIG.cardHeight), 0, 0, cv.INTER_LINEAR);
-    
+    cv.resize(
+      src,
+      warped,
+      new cv.Size(CONFIG.cardWidth, CONFIG.cardHeight),
+      0,
+      0,
+      cv.INTER_LINEAR,
+    );
+
     console.log("📐 Warped:", warped.cols, "x", warped.rows);
-    
-    const results = [];
-    const checkedBoxes = [];
-    
-    // Loop through FIXED checkbox positions
-    Object.keys(CHECKBOX_MAPPING).forEach((key) => {
-      const checkbox = CHECKBOX_MAPPING[key];
-      const { x, y, size } = checkbox.position;
-      
-      const cropX = Math.max(0, Math.min(x, warped.cols - 1));
-      const cropY = Math.max(0, Math.min(y, warped.rows - 1));
-      const cropSize = Math.min(size, Math.min(warped.cols - cropX, warped.rows - cropY));
-      
-      if (cropSize > 10) {
-        const roi = new cv.Rect(cropX, cropY, cropSize, cropSize);
-        const checkboxMat = warped.roi(roi);
-        const analysis = analyzeCheckbox(cv, checkboxMat);
-        
-        const result = {
-          number: checkbox.id,
-          title: checkbox.title,
-          fileType: checkbox.fileType,
-          isChecked: analysis.isChecked,
-          confidence: analysis.confidence,
-          fillPercentage: analysis.fillPercentage,
-        };
-        
-        results.push(result);
-        
-        if (analysis.isChecked && analysis.confidence >= CONFIG.confidenceThreshold) {
-          checkedBoxes.push(result);
-        }
-        
-        checkboxMat.delete();
-      }
-    });
-    
-    console.log("📊 Results:", results);
-    console.log(`✅ Found ${checkedBoxes.length} checked boxes:`, 
-      checkedBoxes.map(r => `#${r.number}: ${r.title}`).join(', '));
-    
+
+    // Get all checkbox positions
+    const boxesArr = Object.values(CHECKBOX_MAPPING);
+
+    // STEP 1: Compute ONE global threshold from the entire checkbox band
+    console.log("🔍 Computing global threshold from checkbox band...");
+    const globalThresh = computeGlobalThreshold(cv, warped, boxesArr);
+    console.log("📊 Global threshold:", globalThresh);
+
+    // STEP 2: Measure each checkbox using the global threshold
+    console.log("📊 Measuring each checkbox...");
+    const fills = boxesArr.map((b) => ({
+      box: b,
+      fill: measureBox(cv, warped, b, globalThresh),
+    }));
+
+    // STEP 3: Determine baseline (minimum fill among the three)
+    // This cancels uniform noise/lighting across all boxes
+    const baseline = Math.min(...fills.map((f) => f.fill));
+    console.log("📊 Baseline (minimum fill):", baseline.toFixed(1), "%");
+
+    // STEP 4: Determine which boxes are checked (relative to baseline)
+    const MARGIN = CONFIG.margin;
+    const results = fills.map(({ box, fill }) => ({
+      number: box.id,
+      title: box.title,
+      fileType: box.fileType,
+      displayName: box.displayName,
+      fillPercentage: Math.round(fill),
+      isChecked: fill - baseline >= MARGIN, // Relative, not absolute!
+    }));
+
+    // Log results
+    console.log(
+      "📊 Results:",
+      results.map((r) => ({
+        number: r.number,
+        title: r.title,
+        fill: r.fillPercentage + "%",
+        isChecked: r.isChecked,
+        above_baseline: (r.fillPercentage - baseline).toFixed(1) + "%",
+      })),
+    );
+
+    const checkedBoxes = results.filter((r) => r.isChecked);
+    console.log(
+      `✅ Found ${checkedBoxes.length} checked boxes:`,
+      checkedBoxes.map((r) => `#${r.number}: ${r.title}`).join(", "),
+    );
+
     // Debug visualization
     if (onDebug) {
       try {
@@ -167,67 +195,91 @@ export const detectSquares = async ({
           cv.rectangle(
             debugMat,
             new cv.Point(checkbox.position.x, checkbox.position.y),
-            new cv.Point(checkbox.position.x + checkbox.position.size, 
-                        checkbox.position.y + checkbox.position.size),
+            new cv.Point(
+              checkbox.position.x + checkbox.position.size,
+              checkbox.position.y + checkbox.position.size,
+            ),
             new cv.Scalar(color[0], color[1], color[2]),
-            3
+            3,
+          );
+
+          const label = `#${result.number}: ${result.isChecked ? "✓" : "✗"} ${result.fillPercentage}%`;
+          cv.putText(
+            debugMat,
+            label,
+            new cv.Point(
+              checkbox.position.x + checkbox.position.size + 10,
+              checkbox.position.y + checkbox.position.size / 2 + 5,
+            ),
+            cv.FONT_HERSHEY_SIMPLEX,
+            0.5,
+            new cv.Scalar(0, 255, 255),
+            1,
           );
         });
-        
+
         const debugCanvas = document.createElement("canvas");
         cv.imshow(debugCanvas, debugMat);
-        
+
         onDebug({
           imageSize: { width: src.cols, height: src.rows },
           warpedSize: { width: CONFIG.cardWidth, height: CONFIG.cardHeight },
+          globalThreshold: globalThresh,
+          baseline: Math.round(baseline),
+          margin: MARGIN,
           checkboxes: results,
           checkedCount: checkedBoxes.length,
           fullImageUrl: debugCanvas.toDataURL(),
           error: null,
         });
-        
+
         debugCanvas.remove();
       } catch (debugError) {
         console.error("Debug error:", debugError);
       }
     }
-    
-    // ONLY SEND CHECKED BOXES
+
+    // Send checked boxes to backend
     if (checkedBoxes.length > 0 && qrId) {
       try {
-        const payload = checkedBoxes.map(r => ({
+        const payload = checkedBoxes.map((r) => ({
           number: r.number,
           title: r.title,
           fileType: r.fileType,
-          confidence: r.confidence,
           fillPercentage: r.fillPercentage,
         }));
-        
-        console.log("📤 Sending checked boxes:", payload);
-        
+
+        console.log(
+          "📤 Sending checked boxes:",
+          JSON.stringify(payload, null, 2),
+        );
+
         const response = await fetch(
           `${import.meta.env.VITE_API_URL}/qr/assign/${qrId}`,
           {
             method: "PATCH",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify(payload),
-          }
+          },
         );
-        
+
         if (!response.ok) {
           throw new Error(`API error: ${response.status}`);
         }
-        
+
+        const responseData = await response.json();
+        console.log("✅ Server response:", responseData);
+
         toast.success(`✅ Found ${checkedBoxes.length} option(s)`);
-        
+
         if (navigate) {
           navigate(`/result/${qrId}`);
         }
-        
+
         return { success: true, checked: checkedBoxes };
       } catch (error) {
         console.error("❌ API error:", error);
-        toast.error("Failed to save results");
+        toast.error("Failed to save results: " + error.message);
         throw error;
       }
     } else {
@@ -235,7 +287,6 @@ export const detectSquares = async ({
       if (setIsModalOpen) setIsModalOpen(true);
       return { success: false, reason: "No checkboxes detected" };
     }
-    
   } catch (error) {
     console.error("❌ Detection error:", error);
     toast.error("Detection failed: " + error.message);

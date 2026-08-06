@@ -8,11 +8,22 @@ import { useParams } from "react-router-dom";
 import { FiDownload } from "react-icons/fi";
 import { FaSquareCheck } from "react-icons/fa6";
 
-// FIXED MAPPING for display
 const OPTION_MAPPING = {
-  1: { title: "i_eat_while_distracted", fileType: "mp4", label: "I eat while distracted" },
-  2: { title: "i_eat_in_a_hurry", fileType: "mp4", label: "I eat in a hurry" },
-  3: { title: "i_eat_mindfully", fileType: "jpg", label: "I eat mindfully" },
+  1: {
+    title: "i_eat_while_distracted",
+    fileType: "mp4",
+    label: "I Eat While Distracted",
+  },
+  2: {
+    title: "i_eat_in_a_hurry",
+    fileType: "mp4",
+    label: "I Eat In A Hurry",
+  },
+  3: {
+    title: "i_eat_mindfully",
+    fileType: "jpg",
+    label: "I Eat Mindfully",
+  },
 };
 
 const Result = () => {
@@ -24,18 +35,23 @@ const Result = () => {
   useEffect(() => {
     const fetchQRDetails = async () => {
       try {
+        console.log("📡 Fetching QR details for:", qrId);
         const response = await axios.get(
-          `${import.meta.env.VITE_API_URL}/qr/details/${qrId}`
+          `${import.meta.env.VITE_API_URL}/qr/details/${qrId}`,
         );
+        console.log("📊 QR Details:", response.data);
         setQrDetails(response.data);
         setLoading(false);
       } catch (err) {
+        console.error("❌ Error fetching details:", err);
         setError(err.message);
         setLoading(false);
       }
     };
 
-    fetchQRDetails();
+    if (qrId) {
+      fetchQRDetails();
+    }
   }, [qrId]);
 
   if (loading) {
@@ -55,11 +71,14 @@ const Result = () => {
   }
 
   const assignedDetails = qrDetails?.assignedDetails || [];
+  const sortedDetails = [...assignedDetails].sort(
+    (a, b) => a.number - b.number,
+  );
 
   return (
     <div className="min-h-[100dvh] bg-[#f3e8d4] py-10 px-4">
       <div className="max-w-3xl mx-auto text-center space-y-6">
-        {assignedDetails.length > 0 ? (
+        {sortedDetails.length > 0 ? (
           <>
             <img
               src="../../ar-tick/main-icon.svg"
@@ -73,9 +92,13 @@ const Result = () => {
             </h2>
 
             <ul className="grid gap-4 md:grid-cols-2 px-2 md:px-6">
-              {assignedDetails.map((detail, index) => {
-                // Use the mapping to get the correct display
-                const option = OPTION_MAPPING[detail.number] || detail;
+              {sortedDetails.map((detail, index) => {
+                const option = OPTION_MAPPING[detail.number];
+                if (!option) {
+                  console.warn("Unknown option number:", detail.number);
+                  return null;
+                }
+
                 return (
                   <li
                     key={index}
@@ -85,7 +108,7 @@ const Result = () => {
                   >
                     <img
                       src={`../../ar-tick/${option.title}.svg`}
-                      alt={option.title}
+                      alt={option.label}
                       className="w-[40vw] h-auto object-contain"
                     />
                     <div className="flex flex-col justify-center items-center gap-2">
