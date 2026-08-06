@@ -3,7 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { detectSquares } from "../utils/detectSquare";
 import { toast } from "react-hot-toast";
 
-// Flip this to false once calibration is done — this whole panel disappears
+// Flip this to false once calibration is done
 const DEBUG_MODE = true;
 
 const SquareDetector = ({ qrId, scannedImage }) => {
@@ -38,18 +38,26 @@ const SquareDetector = ({ qrId, scannedImage }) => {
 
   useEffect(() => {
     if (window.cv?.Mat) {
+      console.log("✅ OpenCV Ready");
       setCvReady(true);
       return;
     }
 
-    const checkCv = setInterval(() => {
-      if (window.cv?.Mat) {
-        setCvReady(true);
-        clearInterval(checkCv);
+    console.warn("Loading OpenCV.js...");
+    const script = document.createElement("script");
+    script.src = "https://docs.opencv.org/4.5.0/opencv.js";
+    script.onload = () => {
+      if (window.cv) {
+        window.cv.onRuntimeInitialized = () => {
+          setCvReady(true);
+        };
       }
-    }, 100);
-
-    return () => clearInterval(checkCv);
+    };
+    script.onerror = () => {
+      console.error("Failed to load OpenCV.js");
+      toast.error("Failed to load OpenCV library");
+    };
+    document.head.appendChild(script);
   }, []);
 
   const handleDetectSquares = async () => {
@@ -107,7 +115,7 @@ const SquareDetector = ({ qrId, scannedImage }) => {
         onLoad={handleDetectSquares}
       />
 
-      {/* ============ DEBUG PANEL ============ */}
+      {/* Debug Panel */}
       {DEBUG_MODE && debugInfo && (
         <div className="fixed bottom-4 left-4 right-4 max-h-[60vh] overflow-y-auto z-50 p-4 bg-black/95 text-green-400 font-mono text-xs rounded-lg shadow-2xl border border-green-500/30">
           <div className="flex justify-between items-center sticky top-0 bg-black pb-2">
@@ -133,20 +141,6 @@ const SquareDetector = ({ qrId, scannedImage }) => {
 
             {debugInfo.error && (
               <p className="text-red-500 font-bold">❌ {debugInfo.error}</p>
-            )}
-
-            {debugInfo.validation && (
-              <div className="mt-2 p-2 bg-gray-900 rounded">
-                <p className="text-white font-bold">
-                  Validation:{" "}
-                  {debugInfo.validation.passed ? "✅ Passed" : "❌ Failed"}
-                </p>
-                {debugInfo.validation.errors?.map((err, i) => (
-                  <p key={i} className="text-red-400 text-[10px]">
-                    {err}
-                  </p>
-                ))}
-              </div>
             )}
 
             {debugInfo.checkboxes && debugInfo.checkboxes.length > 0 && (
@@ -211,7 +205,7 @@ const SquareDetector = ({ qrId, scannedImage }) => {
         </div>
       )}
 
-      {/* Modal for no detection
+      {/* Modal for no detection */}
       {isModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm">
           <div className="bg-white rounded-lg p-6 shadow-xl w-96 text-center">
@@ -232,7 +226,7 @@ const SquareDetector = ({ qrId, scannedImage }) => {
             </button>
           </div>
         </div>
-      )} */}
+      )}
     </>
   );
 };
