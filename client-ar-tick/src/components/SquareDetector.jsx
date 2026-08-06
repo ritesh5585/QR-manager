@@ -36,41 +36,20 @@ const SquareDetector = ({ qrId, scannedImage }) => {
     }
   }, [scannedImage]);
 
-  // Replace the OpenCV loading script in SquareDetector.jsx
   useEffect(() => {
     if (window.cv?.Mat) {
-      console.log("✅ OpenCV Ready");
       setCvReady(true);
       return;
     }
 
-    console.warn("Loading OpenCV.js with contrib module...");
-
-    // Use OpenCV.js with contrib module (includes ArUco)
-    const script = document.createElement("script");
-    script.src = "https://docs.opencv.org/4.10.0/opencv.js";
-    // Alternative: Use a custom build with ArUco support
-
-    script.onload = () => {
-      if (window.cv) {
-        window.cv.onRuntimeInitialized = () => {
-          // Check if ArUco is available
-          if (window.cv.aruco) {
-            console.log("✅ OpenCV.js with ArUco support loaded!");
-          } else {
-            console.warn("⚠️ ArUco not available in this build");
-          }
-          setCvReady(true);
-        };
+    const checkCv = setInterval(() => {
+      if (window.cv?.Mat) {
+        setCvReady(true);
+        clearInterval(checkCv);
       }
-    };
+    }, 100);
 
-    script.onerror = () => {
-      console.error("Failed to load OpenCV.js");
-      toast.error("Failed to load OpenCV library");
-    };
-
-    document.head.appendChild(script);
+    return () => clearInterval(checkCv);
   }, []);
 
   const handleDetectSquares = async () => {
@@ -232,7 +211,7 @@ const SquareDetector = ({ qrId, scannedImage }) => {
         </div>
       )}
 
-      {/* Modal for no detection */}
+      {/* Modal for no detection
       {isModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm">
           <div className="bg-white rounded-lg p-6 shadow-xl w-96 text-center">
@@ -253,7 +232,7 @@ const SquareDetector = ({ qrId, scannedImage }) => {
             </button>
           </div>
         </div>
-      )}
+      )} */}
     </>
   );
 };

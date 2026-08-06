@@ -3,123 +3,38 @@ import { toast } from "react-hot-toast";
 
 // ============ UTILITY FUNCTIONS ============
 
-// Phase 1: Warp to fixed size
-const warpImage = (cv, src, markers) => {
-  if (markers.size() !== 4) {
-    throw new Error(`Expected 4 markers, got ${markers.size()}`);
-  }
+// Target normalized card dimensions for consistent checkbox positioning
+const CARD_WIDTH = 600;
+const CARD_HEIGHT = 1000;
 
-  const points = [];
-  for (let i = 0; i < markers.size(); i++) {
-    const marker = markers.get(i);
-    const corners = marker.getCorners();
-    const center = new cv.Point(
-      (corners[0].x + corners[1].x + corners[2].x + corners[3].x) / 4,
-      (corners[0].y + corners[1].y + corners[2].y + corners[3].y) / 4,
-    );
-    points.push(center);
-  }
-
-  points.sort((a, b) => a.y - b.y);
-  const top = points.slice(0, 2).sort((a, b) => a.x - b.x);
-  const bottom = points.slice(2).sort((a, b) => a.x - b.x);
-  const sortedPoints = [...top, ...bottom];
-
-  const dstPoints = [
-    new cv.Point(0, 0),
-    new cv.Point(600, 0),
-    new cv.Point(600, 1000),
-    new cv.Point(0, 1000),
-  ];
-
-  const srcMat = cv.matFromArray(
-    4,
-    1,
-    cv.CV_32FC2,
-    sortedPoints.flatMap((p) => [p.x, p.y]),
-  );
-  const dstMat = cv.matFromArray(
-    4,
-    1,
-    cv.CV_32FC2,
-    dstPoints.flatMap((p) => [p.x, p.y]),
-  );
-
-  const transform = cv.getPerspectiveTransform(srcMat, dstMat);
-  const warped = new cv.Mat();
-  cv.warpPerspective(src, warped, transform, new cv.Size(600, 1000));
-
-  srcMat.delete();
-  dstMat.delete();
-  transform.delete();
-
-  return warped;
-};
-
-// Phase 2: Fixed ROI (pixels, not percentages)
+// ROI covering the checkbox area
 const getROI = () => {
-  // Adjusted to better capture the checkbox area
   return {
-    x: 20, // Start a bit more to the left
-    y: 280, // Start after the title
-    width: 540, // Wider to capture full checkbox area
-    height: 600, // Taller to capture all 3 checkboxes
+    x: 20,
+    y: 260,
+    width: 560,
+    height: 600,
   };
 };
 
-// Phase 4: Get checkbox strip - adjusted for better spacing
-const getCheckboxStrip = (roi, index) => {
-  const positions = [
-    // Checkbox 1
-    {
-      x: roi.x,
-      y: roi.y + 180, // <-- change this
-      width: roi.width,
-      height: 70, // <-- change this
-    },
+// Returns checkbox region for index 0, 1, 2 (1st, 2nd, 3rd checkbox)
+const getCheckboxRegion = (index) => {
+  const checkboxSize = 38;
+  const leftX = 26;
 
-    // Checkbox 2
-    {
-      x: roi.x,
-      y: roi.y + 320, // <-- change this
-      width: roi.width,
-      height: 70,
-    },
-
-    // Checkbox 3
-    {
-      x: roi.x,
-      y: roi.y + 460, // <-- change this
-      width: roi.width,
-      height: 70,
-    },
-  ];
-
-  return positions[index];
-};
-// Phase 5: Crop only the checkbox - ADJUST THIS FUNCTION
-const getCheckboxCrop = (strip) => {
-  // Size of checkbox crop
-  const checkboxSize = 34;
-
-  // Horizontal adjustment (move left/right)
-  const leftPadding = 6;
-
-  // Vertical adjustment as percentage of strip height
-  // Try: 0.20, 0.22, 0.25 until it perfectly aligns
-  const topPercentage = 0.32;
+  // Vertical centers for the 3 checkboxes on 600x1000 card
+  const yPositions = [455, 595, 735];
 
   return {
-    x: strip.x + leftPadding,
-    y: strip.y,
+    x: leftX,
+    y: yPositions[index] - Math.round(checkboxSize / 2),
     width: checkboxSize,
     height: checkboxSize,
   };
 };
 
-// Phase 6: Analyze checkbox by counting pixels
+// Analyze checkbox region by counting inner pen ink/check mark pixels
 const analyzeCheckbox = (cv, checkboxMat) => {
-  // Convert to grayscale if needed
   let gray = checkboxMat;
   let needsCleanup = false;
 
@@ -129,31 +44,36 @@ const analyzeCheckbox = (cv, checkboxMat) => {
     needsCleanup = true;
   }
 
-  // Apply threshold to get binary image
-  const thresh = new cv.Mat();
-  cv.threshold(gray, thresh, 127, 255, cv.THRESH_BINARY_INV);
+  // Strip away the outer border of the printed checkbox by analyzing the inner 60% center region
+  const insetX = Math.round(gray.cols * 0.2);
+  const insetY = Math.round(gray.rows * 0.2);
+  const insetW = Math.max(1, gray.cols - insetX * 2);
+  const insetH = Math.max(1, gray.rows - insetY * 2);
 
-  // Count black pixels (filled area)
+  const innerRoi = new cv.Rect(insetX, insetY, insetW, insetH);
+  const innerMat = gray.roi(innerRoi);
+
+  // Apply OTSU binary thresholding to isolate ink/marks from paper inside the checkbox
+  const thresh = new cv.Mat();
+  cv.threshold(innerMat, thresh, 0, 255, cv.THRESH_BINARY_INV + cv.THRESH_OTSU);
+
   const totalPixels = thresh.rows * thresh.cols;
   const blackPixels = cv.countNonZero(thresh);
   const fillPercentage = (blackPixels / totalPixels) * 100;
 
-  // Determine if checked
-  // Empty checkbox: ~5-15% filled (border only)
-  // Checked checkbox: ~25-65% filled (check mark inside)
-  const isChecked = fillPercentage > 18 && fillPercentage < 75;
+  // Inner box filled pixels:
+  // Unmarked empty box: 0% - 10% ink (white paper inside)
+  // Marked checked box: > 15% - 85% ink (pen mark/tick inside)
+  const isChecked = fillPercentage >= 15;
 
-  // Calculate confidence
   let confidence = 0;
   if (isChecked) {
-    // For checked: higher fill percentage = higher confidence (up to 65%)
-    confidence = Math.min(100, (fillPercentage / 50) * 100);
+    confidence = Math.min(100, Math.round((fillPercentage / 40) * 100));
   } else {
-    // For empty: lower fill percentage = higher confidence (down to 5%)
-    confidence = Math.max(0, 100 - (fillPercentage / 20) * 100);
+    confidence = Math.max(0, Math.round(100 - (fillPercentage / 15) * 100));
   }
 
-  // Cleanup
+  innerMat.delete();
   if (needsCleanup) {
     gray.delete();
   }
@@ -161,48 +81,11 @@ const analyzeCheckbox = (cv, checkboxMat) => {
 
   return {
     isChecked,
-    confidence: Math.round(Math.min(Math.max(confidence, 0), 100)),
+    confidence: Math.min(Math.max(confidence, 0), 100),
     fillPercentage: Math.round(fillPercentage),
     blackPixels,
     totalPixels,
   };
-};
-
-// Phase 8: Validate document
-const validateDocument = (cv, warped, markerIds) => {
-  const validation = {
-    passed: true,
-    checks: [],
-    errors: [],
-  };
-
-  validation.checks.push({
-    name: "ArUco markers",
-    passed: markerIds.length === 4,
-    details: `Found ${markerIds.length} markers: ${markerIds.join(", ")}`,
-  });
-
-  if (markerIds.length !== 4) {
-    validation.passed = false;
-    validation.errors.push(`Expected 4 markers, found ${markerIds.length}`);
-  }
-
-  const aspectRatio = warped.cols / warped.rows;
-  const expectedRatio = 600 / 1000;
-  const ratioTolerance = 0.1;
-  const aspectValid = Math.abs(aspectRatio - expectedRatio) < ratioTolerance;
-  validation.checks.push({
-    name: "Aspect ratio",
-    passed: aspectValid,
-    details: `Ratio: ${aspectRatio.toFixed(3)}, Expected: ${expectedRatio.toFixed(3)}`,
-  });
-
-  if (!aspectValid) {
-    validation.passed = false;
-    validation.errors.push("Incorrect aspect ratio");
-  }
-
-  return validation;
 };
 
 // ============ MAIN DETECTION FUNCTION ============
@@ -211,8 +94,6 @@ export const detectSquares = async ({
   cv,
   imgRef,
   qrId,
-  detectionParams = {},
-  roiParams = {},
   squareContent,
   navigate,
   setIsModalOpen,
@@ -224,215 +105,105 @@ export const detectSquares = async ({
   const src = cv.imread(img);
 
   if (src.empty()) {
-    console.error("❌ Failed to read image");
+    console.error("❌ Failed to read image into OpenCV Mat");
     return;
   }
 
-  const gray = new cv.Mat();
-  cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
-
   try {
-    console.log("📐 Original image dimensions:", gray.cols, gray.rows);
+    // Standardize input image to 600x1000 for pixel-perfect checkbox alignment
+    const warped = new cv.Mat();
+    cv.resize(src, warped, new cv.Size(CARD_WIDTH, CARD_HEIGHT), 0, 0, cv.INTER_LINEAR);
 
-    // ============ PHASE 1: ArUco Detection & Warp ============
-    let warped;
-    let markerIds = [];
-
-    try {
-      const dictionary = cv.getPredefinedDictionary(cv.DICT_ARUCO_ORIGINAL);
-      const markers = new cv.MatVector();
-      const ids = new cv.Mat();
-
-      if (cv.aruco && cv.aruco.detectMarkers) {
-        cv.aruco.detectMarkers(gray, dictionary, markers, ids);
-        markerIds = ids.data32S ? Array.from(ids.data32S) : [];
-        console.log("🔍 Detected ArUco markers:", markerIds);
-
-        if (markers.size() === 4) {
-          warped = warpImage(cv, src, markers);
-          console.log("✅ Warped image to 600x1000");
-        } else {
-          throw new Error(`Expected 4 markers, found ${markers.size()}`);
-        }
-      } else {
-        throw new Error("ArUco not available in this OpenCV build");
-      }
-
-      markers.delete();
-      ids.delete();
-      dictionary.delete();
-    } catch (arucoError) {
-      console.error("❌ ArUco detection/warp failed:", arucoError);
-      warped = new cv.Mat();
-      cv.resize(src, warped, new cv.Size(600, 1000));
-      console.log("⚠️ Using fallback: resized original image");
-    }
-
-    // ============ PHASE 2: Get Fixed ROI ============
     const roi = getROI();
-    console.log("📐 Using fixed ROI:", roi);
-
-    const roiX = Math.min(Math.round(roi.x), warped.cols - 1);
-    const roiY = Math.min(Math.round(roi.y), warped.rows - 1);
-    const roiWidth = Math.min(Math.round(roi.width), warped.cols - roiX);
-    const roiHeight = Math.min(Math.round(roi.height), warped.rows - roiY);
-
-    const roiMat = warped.roi(new cv.Rect(roiX, roiY, roiWidth, roiHeight));
-
-    // ============ PHASE 3: Debug Rectangle ============
     const debugMat = warped.clone();
-    const pt1 = new cv.Point(roiX, roiY);
-    const pt2 = new cv.Point(roiX + roiWidth, roiY + roiHeight);
-    cv.rectangle(debugMat, pt1, pt2, new cv.Scalar(0, 255, 0), 2);
 
-    // ============ PHASE 8: Document Validation ============
-    const validation = validateDocument(cv, warped, markerIds);
-    console.log("📋 Validation:", validation);
+    // Draw ROI bounds on debug canvas
+    const roiPt1 = new cv.Point(roi.x, roi.y);
+    const roiPt2 = new cv.Point(roi.x + roi.width, roi.y + roi.height);
+    cv.rectangle(debugMat, roiPt1, roiPt2, new cv.Scalar(0, 0, 255), 2);
 
-    // ============ PHASE 4-6: Process Checkboxes ============
     const totalCheckboxes = 3;
     const results = [];
-    const debugInfo = {
-      imageSize: { width: src.cols, height: src.rows },
-      warpedSize: { width: warped.cols, height: warped.rows },
-      roi: { x: roiX, y: roiY, width: roiWidth, height: roiHeight },
-      checkboxes: [],
-      markerIds: markerIds,
-      validation: validation,
-    };
+    const debugCheckboxes = [];
 
     for (let i = 0; i < totalCheckboxes; i++) {
-      // Phase 4: Get checkbox strip
-      const strip = getCheckboxStrip(
-        { x: roiX, y: roiY, width: roiWidth, height: roiHeight },
-        i,
-        totalCheckboxes,
-      );
+      const region = getCheckboxRegion(i);
 
-      // Phase 5: Crop only the checkbox
-      const checkboxCrop = getCheckboxCrop(strip);
+      const cropX = Math.max(0, Math.min(region.x, CARD_WIDTH - 1));
+      const cropY = Math.max(0, Math.min(region.y, CARD_HEIGHT - 1));
+      const cropW = Math.min(region.width, CARD_WIDTH - cropX);
+      const cropH = Math.min(region.height, CARD_HEIGHT - cropY);
 
-      // Ensure crop is within bounds
-      const cropX = Math.min(Math.round(checkboxCrop.x), warped.cols - 1);
-      const cropY = Math.min(Math.round(checkboxCrop.y), warped.rows - 1);
-      const cropWidth = Math.min(
-        Math.round(checkboxCrop.width),
-        warped.cols - cropX,
-      );
-      const cropHeight = Math.min(
-        Math.round(checkboxCrop.height),
-        warped.rows - cropY,
-      );
-
-      if (cropWidth > 0 && cropHeight > 0) {
-        const checkboxMat = warped.roi(
-          new cv.Rect(cropX, cropY, cropWidth, cropHeight),
-        );
-
-        // Phase 6: Analyze checkbox
+      if (cropW > 0 && cropH > 0) {
+        const checkboxMat = warped.roi(new cv.Rect(cropX, cropY, cropW, cropH));
         const analysis = analyzeCheckbox(cv, checkboxMat);
 
-        // Draw on debug image
         const color = analysis.isChecked ? [0, 255, 0] : [255, 0, 0];
-        const dbPt1 = new cv.Point(cropX, cropY);
-        const dbPt2 = new cv.Point(cropX + cropWidth, cropY + cropHeight);
         cv.rectangle(
           debugMat,
-          dbPt1,
-          dbPt2,
+          new cv.Point(cropX, cropY),
+          new cv.Point(cropX + cropW, cropY + cropH),
           new cv.Scalar(color[0], color[1], color[2]),
-          3,
+          3
         );
 
-        // Add label to the right
-        const label = `${i + 1}: ${analysis.isChecked ? "✓" : "○"} ${analysis.confidence}%`;
-        const font = cv.FONT_HERSHEY_SIMPLEX;
-        const point = new cv.Point(
-          cropX + cropWidth + 8,
-          cropY + cropHeight / 2 + 4,
-        );
+        const label = `#${i + 1}: ${analysis.isChecked ? "CHECKED" : "EMPTY"} (${analysis.fillPercentage}%)`;
         cv.putText(
           debugMat,
           label,
-          point,
-          font,
-          0.4,
-          new cv.Scalar(255, 255, 0),
-          1,
+          new cv.Point(cropX + cropW + 10, cropY + Math.round(cropH / 2) + 4),
+          cv.FONT_HERSHEY_SIMPLEX,
+          0.45,
+          new cv.Scalar(0, 255, 255),
+          1
         );
+
+        const itemContent = squareContent?.[i + 1] || {
+          title: `Checkbox ${i + 1}`,
+          fileType: "mp4",
+        };
 
         const result = {
           number: i + 1,
-          title: squareContent[i + 1]?.title || `Checkbox ${i + 1}`,
-          fileType: squareContent[i + 1]?.fileType || "mp4",
+          title: itemContent.title,
+          fileType: itemContent.fileType,
           ...analysis,
-          crop: { x: cropX, y: cropY, width: cropWidth, height: cropHeight },
+          crop: { x: cropX, y: cropY, width: cropW, height: cropH },
         };
-        results.push(result);
 
-        debugInfo.checkboxes.push({
-          index: i + 1,
-          ...analysis,
-          crop: { x: cropX, y: cropY, width: cropWidth, height: cropHeight },
-        });
+        results.push(result);
+        debugCheckboxes.push(result);
 
         checkboxMat.delete();
-      } else {
-        console.warn(`⚠️ Checkbox ${i + 1} crop has invalid dimensions`);
-        results.push({
-          number: i + 1,
-          title: squareContent[i + 1]?.title || `Checkbox ${i + 1}`,
-          fileType: squareContent[i + 1]?.fileType || "mp4",
-          isChecked: false,
-          confidence: 0,
-          fillPercentage: 0,
-          blackPixels: 0,
-          totalPixels: 0,
-        });
       }
     }
 
-    // ============ PHASE 7: Debug Output ============
+    // Pass debug details if handler present
     if (onDebug) {
       try {
         const debugCanvas = document.createElement("canvas");
         cv.imshow(debugCanvas, debugMat);
 
-        const roiGray = new cv.Mat();
-        cv.cvtColor(roiMat, roiGray, cv.COLOR_RGBA2GRAY);
-        const roiThresh = new cv.Mat();
-        cv.threshold(roiGray, roiThresh, 127, 255, cv.THRESH_BINARY_INV);
-        const threshCanvas = document.createElement("canvas");
-        cv.imshow(threshCanvas, roiThresh);
-        roiGray.delete();
-        roiThresh.delete();
-
         onDebug({
-          ...debugInfo,
+          imageSize: { width: src.cols, height: src.rows },
+          warpedSize: { width: CARD_WIDTH, height: CARD_HEIGHT },
+          roi,
+          checkboxes: debugCheckboxes,
           fullImageUrl: debugCanvas.toDataURL(),
-          roiThresholdUrl: threshCanvas.toDataURL(),
           hasChecked: results.some((r) => r.isChecked),
-          overallConfidence:
-            results.length > 0
-              ? Math.round(
-                  results.reduce((sum, r) => sum + r.confidence, 0) /
-                    results.length,
-                )
-              : 0,
           error: null,
         });
       } catch (debugError) {
-        console.error("Debug output error:", debugError);
+        console.error("Debug canvas output error:", debugError);
       }
     }
 
-    // ============ PHASE 10: Send Results ============
+    // Send checked squares to backend
     const checkedSquares = results.filter((r) => r.isChecked);
-    console.log("📦 Checked squares:", checkedSquares);
 
     if (checkedSquares.length > 0 && qrId) {
       try {
-        const apiResults = checkedSquares.map((r) => ({
+        const apiPayload = checkedSquares.map((r) => ({
           number: r.number,
           title: r.title,
           fileType: r.fileType,
@@ -440,44 +211,39 @@ export const detectSquares = async ({
           fillPercentage: r.fillPercentage,
         }));
 
-        await assignQR(qrId, apiResults);
-        toast.success(`✅ Found ${checkedSquares.length} checked box(es)`, {
-          id: "success",
+        await assignQR(qrId, apiPayload);
+        toast.success(`✅ Detected ${checkedSquares.length} marked option(s)`, {
+          id: "detection-success",
         });
 
         if (navigate) {
           navigate(`/result/${qrId}`);
         }
-      } catch (error) {
-        console.error("Assignment error:", error);
+      } catch (assignError) {
+        console.error("QR assignment failed:", assignError);
         toast.error(
-          "Unable to process the QR: " +
-            (error.response?.data?.message || error.message),
+          "Failed to assign QR: " +
+            (assignError.response?.data?.message || assignError.message)
         );
       }
-    } else {
-      console.warn("⚠️ No checked squares detected");
-      if (setIsModalOpen) {
-        setIsModalOpen(true);
-      }
+    } else if (setIsModalOpen) {
+      setIsModalOpen(true);
     }
 
-    // ============ CLEANUP ============
+    // Memory Cleanup
     src.delete();
-    gray.delete();
     warped.delete();
-    roiMat.delete();
     debugMat.delete();
 
     return results;
-  } catch (error) {
-    const message = error?.message || String(error);
-    console.error("❌ Error in square detection:", message);
-    toast.error("Error detecting squares: " + message);
+  } catch (err) {
+    const msg = err?.message || String(err);
+    console.error("❌ Error running square detection:", msg);
+    toast.error("Square detection error: " + msg);
 
     if (onDebug) {
       onDebug({
-        error: message,
+        error: msg,
         imageSize: { width: src.cols, height: src.rows },
         roi: getROI(),
         checkboxes: [],
@@ -485,6 +251,5 @@ export const detectSquares = async ({
     }
 
     src.delete();
-    gray.delete();
   }
 };
