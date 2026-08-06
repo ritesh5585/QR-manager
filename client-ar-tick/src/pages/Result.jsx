@@ -1,21 +1,31 @@
+// ============================================
+// FILE: pages/Result.jsx
+// ============================================
+
 import { useState, useEffect } from "react";
 import axios from "axios";
 import { useParams } from "react-router-dom";
 import { FiDownload } from "react-icons/fi";
 import { FaSquareCheck } from "react-icons/fa6";
 
+// FIXED MAPPING for display
+const OPTION_MAPPING = {
+  1: { title: "i_eat_while_distracted", fileType: "mp4", label: "I eat while distracted" },
+  2: { title: "i_eat_in_a_hurry", fileType: "mp4", label: "I eat in a hurry" },
+  3: { title: "i_eat_mindfully", fileType: "jpg", label: "I eat mindfully" },
+};
+
 const Result = () => {
   const { qrId } = useParams();
-  const [qrDetails, setQrDetails] = useState();
+  const [qrDetails, setQrDetails] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
   useEffect(() => {
-    // axios calling ============================================
     const fetchQRDetails = async () => {
       try {
         const response = await axios.get(
-          `${import.meta.env.VITE_API_URL}/qr/details/${qrId}`,
+          `${import.meta.env.VITE_API_URL}/qr/details/${qrId}`
         );
         setQrDetails(response.data);
         setLoading(false);
@@ -24,7 +34,6 @@ const Result = () => {
         setLoading(false);
       }
     };
-    // =============================================================
 
     fetchQRDetails();
   }, [qrId]);
@@ -45,11 +54,12 @@ const Result = () => {
     );
   }
 
+  const assignedDetails = qrDetails?.assignedDetails || [];
+
   return (
     <div className="min-h-[100dvh] bg-[#f3e8d4] py-10 px-4">
       <div className="max-w-3xl mx-auto text-center space-y-6">
-        {qrDetails?.status === "assigned" &&
-        qrDetails?.assignedDetails.length > 0 ? (
+        {assignedDetails.length > 0 ? (
           <>
             <img
               src="../../ar-tick/main-icon.svg"
@@ -63,48 +73,61 @@ const Result = () => {
             </h2>
 
             <ul className="grid gap-4 md:grid-cols-2 px-2 md:px-6">
-              {qrDetails?.assignedDetails.map((detail, index) => (
-                <li
-                  key={index}
-                  className={`flex ${
-                    index % 2 === 0 ? "flex-row" : "flex-row-reverse"
-                  } rounded-lg items-center justify-between px-4 space-y-3 hover:shadow-lg transition`}
-                >
-                  <img
-                    src={`../../ar-tick/${detail.title}.svg`}
-                    alt={detail.title}
-                    className="w-[40vw] h-auto object-contain"
-                  />
-                  <div className="flex flex-col justify-center items-center gap-2">
+              {assignedDetails.map((detail, index) => {
+                // Use the mapping to get the correct display
+                const option = OPTION_MAPPING[detail.number] || detail;
+                return (
+                  <li
+                    key={index}
+                    className={`flex ${
+                      index % 2 === 0 ? "flex-row" : "flex-row-reverse"
+                    } rounded-lg items-center justify-between px-4 space-y-3 hover:shadow-lg transition`}
+                  >
                     <img
-                      src={`../../ar-tick/${detail.title}-text.svg`}
-                      alt="text"
-                      className="w-23"
+                      src={`../../ar-tick/${option.title}.svg`}
+                      alt={option.title}
+                      className="w-[40vw] h-auto object-contain"
                     />
-                    <button
-                      onClick={() => {
-                        const fileName = `${detail.title}.${detail.fileType}`;
-                        const link = document.createElement("a");
-                        link.href = `../../ar-tick/${fileName}`; // Relative to current base path
-                        link.download = fileName;
-                        document.body.appendChild(link);
-                        link.click();
-                        document.body.removeChild(link);
-                      }}
-                      className="inline-flex items-center gap-1 px-3 py-1.5 bg-teal-500 hover:bg-teal-600 text-white rounded-md text-sm"
-                    >
-                      <FiDownload size={16} />
-                      <p className="text-xs">Download</p>
-                    </button>
-                  </div>
-                </li>
-              ))}
+                    <div className="flex flex-col justify-center items-center gap-2">
+                      <img
+                        src={`../../ar-tick/${option.title}-text.svg`}
+                        alt="text"
+                        className="w-23"
+                      />
+                      <button
+                        onClick={() => {
+                          const fileName = `${option.title}.${option.fileType}`;
+                          const link = document.createElement("a");
+                          link.href = `../../ar-tick/${fileName}`;
+                          link.download = fileName;
+                          document.body.appendChild(link);
+                          link.click();
+                          document.body.removeChild(link);
+                        }}
+                        className="inline-flex items-center gap-1 px-3 py-1.5 bg-teal-500 hover:bg-teal-600 text-white rounded-md text-sm"
+                      >
+                        <FiDownload size={16} />
+                        <p className="text-xs">Download</p>
+                      </button>
+                    </div>
+                  </li>
+                );
+              })}
             </ul>
           </>
         ) : (
-          <p className="text-gray-600 text-lg">
-            No assigned details found for this QR code.
-          </p>
+          <div className="text-center">
+            <div className="text-6xl mb-4">📋</div>
+            <p className="text-gray-600 text-lg">
+              No options were selected on this QR code.
+            </p>
+            <button
+              onClick={() => window.location.reload()}
+              className="mt-4 px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition"
+            >
+              Scan Again
+            </button>
+          </div>
         )}
       </div>
     </div>

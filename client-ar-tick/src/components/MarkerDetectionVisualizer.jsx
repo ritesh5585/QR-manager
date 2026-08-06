@@ -1,3 +1,8 @@
+// ============================================
+// FILE: src/components/MarkerDetectionVisualizer.jsx
+// (YOUR ORIGINAL WORKING CODE - KEEP AS IS)
+// ============================================
+
 import React, { useEffect, useRef, useState, useCallback } from "react";
 import { motion } from "framer-motion";
 import {
@@ -105,19 +110,16 @@ const MarkerDetectionVisualizer = ({ onFourMarkersDetected }) => {
     if (ok) setTorchOn(next);
   }, [torchOn]);
 
-  // Flip camera between front and back
   const flipCamera = useCallback(async () => {
     if (isFlipping) return;
     setIsFlipping(true);
 
-    // Stop current stream
     if (streamRef.current) {
       streamRef.current.getTracks().forEach((t) => t.stop());
       streamRef.current = null;
       trackRef.current = null;
     }
 
-    // Toggle facing mode
     const newFacingMode = facingMode === "environment" ? "user" : "environment";
     setFacingMode(newFacingMode);
     
@@ -125,7 +127,6 @@ const MarkerDetectionVisualizer = ({ onFourMarkersDetected }) => {
       await startCameraWithMode(newFacingMode);
     } catch (error) {
       console.error("Flip camera error:", error);
-      // Try to revert
       try {
         await startCameraWithMode(facingMode);
       } catch (revertError) {
@@ -136,7 +137,6 @@ const MarkerDetectionVisualizer = ({ onFourMarkersDetected }) => {
     setIsFlipping(false);
   }, [facingMode, isFlipping]);
 
-  // Start camera with specific mode
   const startCameraWithMode = useCallback(async (mode) => {
     try {
       setIsLoading(true);
@@ -170,12 +170,10 @@ const MarkerDetectionVisualizer = ({ onFourMarkersDetected }) => {
     }
   }, []);
 
-  // Start camera with fallbacks
   const startCamera = useCallback(async () => {
     await startCameraWithMode(facingMode);
   }, [facingMode, startCameraWithMode]);
 
-  // Handle camera on/off
   useEffect(() => {
     if (!cameraOn) {
       if (streamRef.current) {
@@ -187,7 +185,6 @@ const MarkerDetectionVisualizer = ({ onFourMarkersDetected }) => {
       return;
     }
 
-    // Check camera availability first
     checkCameraAvailability().then(result => {
       if (!result.available) {
         setCameraError("No camera found on this device");
@@ -209,7 +206,7 @@ const MarkerDetectionVisualizer = ({ onFourMarkersDetected }) => {
     };
   }, [cameraOn, startCamera]);
 
-  // Main render loop - displays video on canvas
+  // Main render loop
   useEffect(() => {
     if (!cameraOn || cameraError || !streamRef.current || isLoading) {
       return;
@@ -231,7 +228,6 @@ const MarkerDetectionVisualizer = ({ onFourMarkersDetected }) => {
     let stableFrames = 0;
     let previousOrdered = null;
 
-    // Small canvas for detection
     const smallCanvas = document.createElement("canvas");
     const smallContext = smallCanvas.getContext("2d", {
       willReadFrequently: true,
@@ -243,13 +239,11 @@ const MarkerDetectionVisualizer = ({ onFourMarkersDetected }) => {
       }
 
       try {
-        // Check if video is ready
         if (!video || video.readyState < 2) {
           animationRef.current = requestAnimationFrame(renderFrame);
           return;
         }
 
-        // Set canvas size to match video
         const vw = video.videoWidth || 640;
         const vh = video.videoHeight || 480;
 
@@ -258,7 +252,6 @@ const MarkerDetectionVisualizer = ({ onFourMarkersDetected }) => {
           canvas.height = vh;
         }
 
-        // Draw video frame to canvas (mirror for front camera)
         if (facingMode === "user") {
           context.save();
           context.scale(-1, 1);
@@ -268,19 +261,16 @@ const MarkerDetectionVisualizer = ({ onFourMarkersDetected }) => {
           context.drawImage(video, 0, 0, canvas.width, canvas.height);
         }
 
-        // Only run detection every few frames
         const dueForDetection = timestamp - lastDetectionTime >= DETECTION_INTERVAL_MS;
 
         if (dueForDetection && cvReady && !processed) {
           lastDetectionTime = timestamp;
 
           try {
-            // Downscale for detection
             const scale = DETECTION_WIDTH / canvas.width;
             smallCanvas.width = DETECTION_WIDTH;
             smallCanvas.height = Math.round(canvas.height * scale);
             
-            // Draw mirrored for detection if front camera
             if (facingMode === "user") {
               smallContext.save();
               smallContext.scale(-1, 1);
@@ -323,7 +313,6 @@ const MarkerDetectionVisualizer = ({ onFourMarkersDetected }) => {
                   [ordered.bottomLeft.center.x * invScale, ordered.bottomLeft.center.y * invScale],
                 ];
 
-                // Capture the image
                 const cv2 = window.cv;
                 const srcMat2 = cv2.imread(canvas);
                 const srcTri = cv2.matFromArray(4, 1, cv2.CV_32FC2, orderedCorners.flat());
@@ -357,7 +346,6 @@ const MarkerDetectionVisualizer = ({ onFourMarkersDetected }) => {
                 cv2.imshow(resultCanvas, dst);
                 const dataUrl = resultCanvas.toDataURL();
 
-                // Stop camera
                 if (streamRef.current) {
                   streamRef.current.getTracks().forEach((t) => t.stop());
                   streamRef.current = null;
@@ -384,7 +372,6 @@ const MarkerDetectionVisualizer = ({ onFourMarkersDetected }) => {
           }
         }
 
-        // Continue animation
         animationRef.current = requestAnimationFrame(renderFrame);
       } catch (err) {
         console.error("Render error:", err);
@@ -392,7 +379,6 @@ const MarkerDetectionVisualizer = ({ onFourMarkersDetected }) => {
       }
     };
 
-    // Start the render loop
     animationRef.current = requestAnimationFrame(renderFrame);
 
     return () => {
@@ -403,7 +389,6 @@ const MarkerDetectionVisualizer = ({ onFourMarkersDetected }) => {
     };
   }, [cameraOn, cameraError, cvReady, onFourMarkersDetected, facingMode, isLoading]);
 
-  // Retry camera
   const retryCamera = () => {
     setCameraError(null);
     setCroppedImage(null);
@@ -414,7 +399,6 @@ const MarkerDetectionVisualizer = ({ onFourMarkersDetected }) => {
 
   return (
     <div className="fixed inset-0 bg-black overflow-hidden">
-      {/* Video element - hidden, used as source */}
       <video
         ref={videoRef}
         playsInline
@@ -424,7 +408,6 @@ const MarkerDetectionVisualizer = ({ onFourMarkersDetected }) => {
         style={{ display: "none" }}
       />
 
-      {/* Canvas element - shows the video with overlays */}
       <canvas
         ref={canvasRef}
         className="absolute inset-0 w-full h-full object-contain"
@@ -438,7 +421,7 @@ const MarkerDetectionVisualizer = ({ onFourMarkersDetected }) => {
               {isLoading || !cvReady ? (
                 <div className="absolute inset-0 flex flex-col items-center justify-center bg-black px-4 z-10">
                   <div className="text-white text-center max-w-sm w-full">
-                    <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-white mx-auto mb-4"></div>
+                    <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-white mx-auto mb-4" />
                     <p className="text-lg font-semibold">
                       {!cvReady ? "Loading OpenCV..." : "Starting camera..."}
                     </p>
@@ -466,7 +449,6 @@ const MarkerDetectionVisualizer = ({ onFourMarkersDetected }) => {
                   </button>
                 </div>
               ) : (
-                // Camera is working - overlays on top of canvas
                 <>
                   <div className="absolute inset-0 bg-gradient-to-b from-black/60 via-transparent to-black/70 pointer-events-none z-10" />
 
@@ -475,7 +457,6 @@ const MarkerDetectionVisualizer = ({ onFourMarkersDetected }) => {
                       Scan Your Card
                     </h1>
                     <div className="flex gap-2">
-                      {/* Flip Camera Button */}
                       <button
                         onClick={flipCamera}
                         disabled={isFlipping}

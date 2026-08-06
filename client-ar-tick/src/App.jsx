@@ -1,3 +1,7 @@
+// ============================================
+// FILE: src/App.jsx
+// ============================================
+
 import { Routes, Route } from "react-router-dom";
 import "./config/axios";
 import DocumentScanner from "./pages/DocumentScanner";
