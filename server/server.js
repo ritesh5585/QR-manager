@@ -1,3 +1,4 @@
+// server.js
 import express from "express";
 import connectDB from "./db.js";
 import cors from "cors";
@@ -17,22 +18,26 @@ const __dirname = path.dirname(__filename);
 
 const app = express();
 
+// ✅ FIXED: Add both localhost AND ngrok URLs
 app.use(
   cors({
     origin: [
       "http://localhost:5173",
       "http://localhost:3000",
-      // "https://yourdomain.com",
+      "https://mustang-refold-paternity.ngrok-free.dev", 
+      "https://cruciate-aria-overapprehensively.ngrok-free.dev",
+      // Add any other origins you need
     ],
-    // credentials: true,
     methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allowedHeaders: [
       "Content-Type",
       "Authorization",
       "ngrok-skip-browser-warning",
+      "Accept",
     ],
   }),
 );
+
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use("/qr-codes", express.static(path.join(__dirname, "qr-codes")));
@@ -51,6 +56,10 @@ const startServer = async () => {
     await connectDB();
     app.listen(3000, () => {
       console.log("App started successfully on 3000");
+      console.log("✅ CORS enabled for:", [
+        "http://localhost:5173",
+        "https://mustang-refold-paternity.ngrok-free.dev",
+      ]);
     });
   } catch (err) {
     console.log("Failed to connect to DB");
