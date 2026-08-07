@@ -1,9 +1,5 @@
-// ============================================
-// FILE: pages/Result.jsx
-// ============================================
-
 import { useState, useEffect } from "react";
-import axios from "axios";
+import { qrDetails as qrDetail } from "../service/api.service";
 import { useParams } from "react-router-dom";
 import { FiDownload } from "react-icons/fi";
 import { FaSquareCheck } from "react-icons/fa6";
@@ -36,11 +32,9 @@ const Result = () => {
     const fetchQRDetails = async () => {
       try {
         console.log("📡 Fetching QR details for:", qrId);
-        const response = await axios.get(
-          `${import.meta.env.VITE_API_URL}/qr/details/${qrId}`,
-        );
-        console.log("📊 QR Details:", response.data);
-        setQrDetails(response.data);
+        const data = await qrDetail(qrId);
+        console.log("📊 QR Details:", data);
+        setQrDetails(data);
         setLoading(false);
       } catch (err) {
         console.error("❌ Error fetching details:", err);
@@ -81,7 +75,7 @@ const Result = () => {
         {sortedDetails.length > 0 ? (
           <>
             <img
-              src="../../ar-tick/main-icon.svg"
+              src="/main-icon.svg"
               alt="Result"
               className="mx-auto w-[350px] h-auto"
             />
@@ -107,21 +101,29 @@ const Result = () => {
                     } rounded-lg items-center justify-between px-4 space-y-3 hover:shadow-lg transition`}
                   >
                     <img
-                      src={`../../ar-tick/${option.title}.svg`}
+                      src={`/${option.title}.svg`}
                       alt={option.label}
                       className="w-[40vw] h-auto object-contain"
+                      onError={(e) => {
+                        console.error(`Failed to load: /${option.title}.svg`);
+                        e.target.src = '/placeholder.svg';
+                      }}
                     />
                     <div className="flex flex-col justify-center items-center gap-2">
                       <img
-                        src={`../../ar-tick/${option.title}-text.svg`}
+                        src={`/${option.title}-text.svg`}
                         alt="text"
                         className="w-23"
+                        onError={(e) => {
+                          console.error(`Failed to load: /${option.title}-text.svg`);
+                          e.target.style.display = 'none';
+                        }}
                       />
                       <button
                         onClick={() => {
                           const fileName = `${option.title}.${option.fileType}`;
                           const link = document.createElement("a");
-                          link.href = `../../ar-tick/${fileName}`;
+                          link.href = `/${fileName}`;
                           link.download = fileName;
                           document.body.appendChild(link);
                           link.click();

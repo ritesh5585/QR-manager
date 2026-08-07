@@ -11,4 +11,4 @@ export const assignQR = async (qrId, checkedSquares) => {
 
 export const qrDetails = async (qrId) => {
   return (await api.get(`/qr/details/${qrId}`)).data;
-}; 
+};

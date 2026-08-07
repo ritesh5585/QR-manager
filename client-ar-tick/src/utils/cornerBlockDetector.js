@@ -4,7 +4,8 @@
 
 export function detectCornerBlocks(cv, srcMat, options = {}) {
   const frameArea = srcMat.rows * srcMat.cols;
-  const effectiveMinArea = options.minArea ?? Math.max(50, Math.round(frameArea * 0.0006));
+  const effectiveMinArea =
+    options.minArea ?? Math.max(50, Math.round(frameArea * 0.0006));
   const maxAreaRatio = options.maxAreaRatio ?? 0.15;
 
   const {

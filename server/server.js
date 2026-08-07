@@ -23,10 +23,9 @@ app.use(
   cors({
     origin: [
       "http://localhost:5173",
-      "http://localhost:3000",
-      "https://mustang-refold-paternity.ngrok-free.dev", 
+      "https://square-detector.netlify.app",
+      "https://mustang-refold-paternity.ngrok-free.dev",
       "https://cruciate-aria-overapprehensively.ngrok-free.dev",
-      // Add any other origins you need
     ],
     methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allowedHeaders: [

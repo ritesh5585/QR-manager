@@ -1,7 +1,3 @@
-// ============================================
-// FILE: components/SquareDetector.jsx (FIXED)
-// ============================================
-
 import React, { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { toast } from "react-hot-toast";
@@ -73,9 +69,7 @@ const SquareDetector = ({ qrId, scannedImage }) => {
       // Log the result for debugging
       console.log("📊 Detection result:", result);
     } catch (error) {
-      // This should only catch unexpected errors, not normal flow
-      console.error("❌ Unexpected error in SquareDetector:", error);
-      // Don't open modal or toast here - detectSquares already handled it
+      console.error("Unexpected error in SquareDetector:", error);
     } finally {
       setIsProcessing(false);
     }
@@ -189,8 +183,9 @@ const SquareDetector = ({ qrId, scannedImage }) => {
             <div className="flex gap-3 justify-center">
               <button
                 onClick={() => {
-                  setIsModalOpen(false);
-                  window.location.reload();
+                  // setIsModalOpen(false);
+                  // window.location.reload();
+                  navigate(-1); 
                 }}
                 className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition"
               >

@@ -5,7 +5,7 @@ import tailwindcss from '@tailwindcss/vite'
 
 export default defineConfig({
   plugins: [react(), tailwindcss()],
-  base: '/ar-tick/',
+  base: '/',
   server: {
     host: true,
     port: 5173,
