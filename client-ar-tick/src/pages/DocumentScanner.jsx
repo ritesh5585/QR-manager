@@ -1,8 +1,3 @@
-// ============================================
-// FILE: src/pages/DocumentScanner.jsx
-// (YOUR ORIGINAL WORKING CODE)
-// ============================================
-
 import React, { useState } from "react";
 import { useParams } from "react-router-dom";
 import MarkerDetectionVisualizer from "../components/MarkerDetectionVisualizer";

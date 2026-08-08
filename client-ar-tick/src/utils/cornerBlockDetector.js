@@ -1,16 +1,13 @@
-// Detects 4 solid-color square blocks (your card's actual corner markers)
-// instead of decoding ArUco IDs. Returns up to 4 candidate blocks with
-// their center point and outer corner point, ready for perspective warp.
-
-export function detectCornerBlocks(cv, srcMat, options = {}) {
+  export function detectCornerBlocks(cv, srcMat, options = {}) {
   const frameArea = srcMat.rows * srcMat.cols;
   const effectiveMinArea =
     options.minArea ?? Math.max(50, Math.round(frameArea * 0.0006));
   const maxAreaRatio = options.maxAreaRatio ?? 0.15;
 
+  //These are the BLUE color settings
   const {
     hLow = 80,
-    hHigh = 140, // Hue range for blue/cyan
+    hHigh = 140, 
     sLow = 45,
     sHigh = 255,
     vLow = 30,
@@ -31,6 +28,7 @@ export function detectCornerBlocks(cv, srcMat, options = {}) {
     vHigh,
     255,
   ]);
+  
   const mask = new cv.Mat();
   cv.inRange(hsv, low, high, mask);
 

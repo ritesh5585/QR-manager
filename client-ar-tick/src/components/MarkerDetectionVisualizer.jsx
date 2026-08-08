@@ -1,8 +1,3 @@
-// ============================================
-// FILE: src/components/MarkerDetectionVisualizer.jsx
-// (YOUR ORIGINAL WORKING CODE - KEEP AS IS)
-// ============================================
-
 import React, { useEffect, useRef, useState, useCallback } from "react";
 import { motion } from "framer-motion";
 import {
@@ -21,14 +16,34 @@ import {
 
 // ---- Icons ----
 const CameraOffIcon = (props) => (
-  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" {...props}>
-    <path d="M1 1l22 22M9.5 5H15l2 2h3a2 2 0 0 1 2 2v9.5M15 15.5A4 4 0 1 1 8 12M3 7v10a2 2 0 0 0 2 2h10" strokeLinecap="round" strokeLinejoin="round" />
+  <svg
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="2"
+    {...props}
+  >
+    <path
+      d="M1 1l22 22M9.5 5H15l2 2h3a2 2 0 0 1 2 2v9.5M15 15.5A4 4 0 1 1 8 12M3 7v10a2 2 0 0 0 2 2h10"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    />
   </svg>
 );
 
 const CameraOnIcon = (props) => (
-  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" {...props}>
-    <path d="M9.5 5H15l2 2h3a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2h3z" strokeLinecap="round" strokeLinejoin="round" />
+  <svg
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="2"
+    {...props}
+  >
+    <path
+      d="M9.5 5H15l2 2h3a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2h3z"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    />
     <circle cx="12" cy="13" r="3.5" />
   </svg>
 );
@@ -40,8 +55,19 @@ const FlashOnIcon = (props) => (
 );
 
 const FlashOffIcon = (props) => (
-  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" {...props}>
-    <path d="M13 2 3 14h7l-1 8 11-14h-7l1-6z" strokeLinecap="round" strokeLinejoin="round" opacity="0.4" />
+  <svg
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="2"
+    {...props}
+  >
+    <path
+      d="M13 2 3 14h7l-1 8 11-14h-7l1-6z"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      opacity="0.4"
+    />
     <path d="M2 2l20 20" strokeLinecap="round" />
   </svg>
 );
@@ -74,7 +100,7 @@ const MarkerDetectionVisualizer = ({ onFourMarkersDetected }) => {
   useEffect(() => {
     console.log("🔄 Loading OpenCV...");
     if (window.cv && window.cv.Mat) {
-      console.log("✅ OpenCV already loaded");
+      // console.log("✅ OpenCV already loaded");
       setCvReady(true);
       return;
     }
@@ -91,7 +117,7 @@ const MarkerDetectionVisualizer = ({ onFourMarkersDetected }) => {
       }
     };
     script.onerror = () => {
-      console.error("❌ Failed to load OpenCV");
+      console.error("Failed to load OpenCV");
       setCameraError("OpenCV library failed to load");
       setIsLoading(false);
     };
@@ -122,7 +148,7 @@ const MarkerDetectionVisualizer = ({ onFourMarkersDetected }) => {
 
     const newFacingMode = facingMode === "environment" ? "user" : "environment";
     setFacingMode(newFacingMode);
-    
+
     try {
       await startCameraWithMode(newFacingMode);
     } catch (error) {
@@ -133,7 +159,7 @@ const MarkerDetectionVisualizer = ({ onFourMarkersDetected }) => {
         setCameraError("Failed to switch camera");
       }
     }
-    
+
     setIsFlipping(false);
   }, [facingMode, isFlipping]);
 
@@ -158,7 +184,9 @@ const MarkerDetectionVisualizer = ({ onFourMarkersDetected }) => {
         video.srcObject = stream;
         await video.play();
         console.log(`📷 Camera started successfully with mode: ${mode}`);
-        console.log(`📹 Video dimensions: ${video.videoWidth}x${video.videoHeight}`);
+        console.log(
+          `📹 Video dimensions: ${video.videoWidth}x${video.videoHeight}`,
+        );
         setIsLoading(false);
       }
     } catch (err) {
@@ -185,7 +213,7 @@ const MarkerDetectionVisualizer = ({ onFourMarkersDetected }) => {
       return;
     }
 
-    checkCameraAvailability().then(result => {
+    checkCameraAvailability().then((result) => {
       if (!result.available) {
         setCameraError("No camera found on this device");
         setIsLoading(false);
@@ -261,7 +289,8 @@ const MarkerDetectionVisualizer = ({ onFourMarkersDetected }) => {
           context.drawImage(video, 0, 0, canvas.width, canvas.height);
         }
 
-        const dueForDetection = timestamp - lastDetectionTime >= DETECTION_INTERVAL_MS;
+        const dueForDetection =
+          timestamp - lastDetectionTime >= DETECTION_INTERVAL_MS;
 
         if (dueForDetection && cvReady && !processed) {
           lastDetectionTime = timestamp;
@@ -270,14 +299,26 @@ const MarkerDetectionVisualizer = ({ onFourMarkersDetected }) => {
             const scale = DETECTION_WIDTH / canvas.width;
             smallCanvas.width = DETECTION_WIDTH;
             smallCanvas.height = Math.round(canvas.height * scale);
-            
+
             if (facingMode === "user") {
               smallContext.save();
               smallContext.scale(-1, 1);
-              smallContext.drawImage(video, -canvas.width, 0, canvas.width, canvas.height);
+              smallContext.drawImage(
+                video,
+                -canvas.width,
+                0,
+                canvas.width,
+                canvas.height,
+              );
               smallContext.restore();
             } else {
-              smallContext.drawImage(canvas, 0, 0, smallCanvas.width, smallCanvas.height);
+              smallContext.drawImage(
+                canvas,
+                0,
+                0,
+                smallCanvas.width,
+                smallCanvas.height,
+              );
             }
 
             const cv = window.cv;
@@ -290,7 +331,8 @@ const MarkerDetectionVisualizer = ({ onFourMarkersDetected }) => {
             if (blocks.length >= 4) {
               const ordered = orderBlocksForDocument(blocks);
               const plausible = ordered && isPlausibleCard(ordered);
-              const stable = ordered && cornersAreStable(ordered, previousOrdered);
+              const stable =
+                ordered && cornersAreStable(ordered, previousOrdered);
 
               if (plausible && stable) {
                 stableFrames += 1;
@@ -307,24 +349,45 @@ const MarkerDetectionVisualizer = ({ onFourMarkersDetected }) => {
 
                 const invScale = 1 / scale;
                 const orderedCorners = [
-                  [ordered.topLeft.center.x * invScale, ordered.topLeft.center.y * invScale],
-                  [ordered.topRight.center.x * invScale, ordered.topRight.center.y * invScale],
-                  [ordered.bottomRight.center.x * invScale, ordered.bottomRight.center.y * invScale],
-                  [ordered.bottomLeft.center.x * invScale, ordered.bottomLeft.center.y * invScale],
+                  [
+                    ordered.topLeft.center.x * invScale,
+                    ordered.topLeft.center.y * invScale,
+                  ],
+                  [
+                    ordered.topRight.center.x * invScale,
+                    ordered.topRight.center.y * invScale,
+                  ],
+                  [
+                    ordered.bottomRight.center.x * invScale,
+                    ordered.bottomRight.center.y * invScale,
+                  ],
+                  [
+                    ordered.bottomLeft.center.x * invScale,
+                    ordered.bottomLeft.center.y * invScale,
+                  ],
                 ];
 
                 const cv2 = window.cv;
                 const srcMat2 = cv2.imread(canvas);
-                const srcTri = cv2.matFromArray(4, 1, cv2.CV_32FC2, orderedCorners.flat());
+                const srcTri = cv2.matFromArray(
+                  4,
+                  1,
+                  cv2.CV_32FC2,
+                  orderedCorners.flat(),
+                );
 
                 const width = 480;
                 const height = 800;
 
                 const dstTri = cv2.matFromArray(4, 1, cv2.CV_32FC2, [
-                  0, 0,
-                  width, 0,
-                  width, height,
-                  0, height,
+                  0,
+                  0,
+                  width,
+                  0,
+                  width,
+                  height,
+                  0,
+                  height,
                 ]);
 
                 const M = cv2.getPerspectiveTransform(srcTri, dstTri);
@@ -337,7 +400,7 @@ const MarkerDetectionVisualizer = ({ onFourMarkersDetected }) => {
                   dsize,
                   cv2.INTER_LINEAR,
                   cv2.BORDER_CONSTANT,
-                  new cv2.Scalar()
+                  new cv2.Scalar(),
                 );
 
                 const resultCanvas = document.createElement("canvas");
@@ -387,7 +450,14 @@ const MarkerDetectionVisualizer = ({ onFourMarkersDetected }) => {
         cancelAnimationFrame(animationRef.current);
       }
     };
-  }, [cameraOn, cameraError, cvReady, onFourMarkersDetected, facingMode, isLoading]);
+  }, [
+    cameraOn,
+    cameraError,
+    cvReady,
+    onFourMarkersDetected,
+    facingMode,
+    isLoading,
+  ]);
 
   const retryCamera = () => {
     setCameraError(null);
@@ -438,7 +508,9 @@ const MarkerDetectionVisualizer = ({ onFourMarkersDetected }) => {
                     <div className="w-16 h-16 rounded-full bg-red-500/20 flex items-center justify-center mx-auto mb-4">
                       <CameraOffIcon className="w-8 h-8 text-red-500" />
                     </div>
-                    <p className="text-red-500 text-lg font-semibold">Camera Error</p>
+                    <p className="text-red-500 text-lg font-semibold">
+                      Camera Error
+                    </p>
                     <p className="text-red-400 text-sm mt-2">{cameraError}</p>
                   </div>
                   <button
@@ -463,10 +535,28 @@ const MarkerDetectionVisualizer = ({ onFourMarkersDetected }) => {
                         className="w-11 h-11 rounded-full flex items-center justify-center backdrop-blur-md bg-white/15 text-white hover:bg-white/25 transition-colors disabled:opacity-50"
                         aria-label="Flip camera"
                       >
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-5 h-5">
-                          <path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2" strokeLinecap="round" strokeLinejoin="round" />
-                          <path d="M8 12l4-4 4 4" strokeLinecap="round" strokeLinejoin="round" />
-                          <path d="M12 8v12" strokeLinecap="round" strokeLinejoin="round" />
+                        <svg
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          stroke="currentColor"
+                          strokeWidth="2"
+                          className="w-5 h-5"
+                        >
+                          <path
+                            d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                          />
+                          <path
+                            d="M8 12l4-4 4 4"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                          />
+                          <path
+                            d="M12 8v12"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                          />
                         </svg>
                       </button>
 
@@ -491,7 +581,9 @@ const MarkerDetectionVisualizer = ({ onFourMarkersDetected }) => {
                         onClick={() => {
                           setCameraOn(false);
                           if (streamRef.current) {
-                            streamRef.current.getTracks().forEach((t) => t.stop());
+                            streamRef.current
+                              .getTracks()
+                              .forEach((t) => t.stop());
                             streamRef.current = null;
                             trackRef.current = null;
                           }
