@@ -4,7 +4,6 @@ import { toast } from "react-hot-toast";
 import {
   requestCameraWithFallback,
   getCameraErrorMessage,
-  checkCameraAvailability,
   getCameraPermissionStatus,
 } from "../utils/cameraHelper";
 import { getVideoTrack, isTorchSupported, setTorch } from "../utils/flashlight";
@@ -21,87 +20,97 @@ import {
 import { CARD_CONFIG } from "../cards/config";
 
 // ---- Icons ----
-const CameraOffIcon = (props) => (
-  <svg
-    viewBox="0 0 24 24"
-    fill="none"
-    stroke="currentColor"
-    strokeWidth="2"
-    {...props}
-  >
-    <path
-      d="M1 1l22 22M9.5 5H15l2 2h3a2 2 0 0 1 2 2v9.5M15 15.5A4 4 0 1 1 8 12M3 7v10a2 2 0 0 0 2 2h10"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    />
-  </svg>
-);
+const Icon = ({ name, className, ...props }) => {
+  const icons = {
+    cameraOff: (p) => (
+      <svg
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        {...p}
+      >
+        <path
+          d="M1 1l22 22M9.5 5H15l2 2h3a2 2 0 0 1 2 2v9.5M15 15.5A4 4 0 1 1 8 12M3 7v10a2 2 0 0 0 2 2h10"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
+      </svg>
+    ),
+    cameraOn: (p) => (
+      <svg
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        {...p}
+      >
+        <path
+          d="M9.5 5H15l2 2h3a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2h3z"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
+        <circle cx="12" cy="13" r="3.5" />
+      </svg>
+    ),
+    flashOn: (p) => (
+      <svg viewBox="0 0 24 24" fill="currentColor" {...p}>
+        <path d="M13 2 3 14h7l-1 8 11-14h-7l1-6z" />
+      </svg>
+    ),
+    flashOff: (p) => (
+      <svg
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        {...p}
+      >
+        <path
+          d="M13 2 3 14h7l-1 8 11-14h-7l1-6z"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          opacity="0.4"
+        />
+        <path d="M2 2l20 20" strokeLinecap="round" />
+      </svg>
+    ),
+    flip: (p) => (
+      <svg
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        {...p}
+      >
+        <path
+          d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
+        <path d="M8 12l4-4 4 4" strokeLinecap="round" strokeLinejoin="round" />
+        <path d="M12 8v12" strokeLinecap="round" strokeLinejoin="round" />
+      </svg>
+    ),
+  };
+  const IconComponent = icons[name];
+  return IconComponent ? (
+    <IconComponent className={className} {...props} />
+  ) : null;
+};
 
-const CameraOnIcon = (props) => (
-  <svg
-    viewBox="0 0 24 24"
-    fill="none"
-    stroke="currentColor"
-    strokeWidth="2"
-    {...props}
-  >
-    <path
-      d="M9.5 5H15l2 2h3a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2h3z"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    />
-    <circle cx="12" cy="13" r="3.5" />
-  </svg>
-);
+// ---- Constants ----
+const CONFIG = {
+  FRAME_INTERVAL: 100,
+  MIN_MATCHES: 25,
+  STABLE_FRAMES_REQUIRED: 3,
+  CAMERA_TIMEOUT: 10000,
+  MAX_RETRIES: 3,
+};
 
-const FlashOnIcon = (props) => (
-  <svg viewBox="0 0 24 24" fill="currentColor" {...props}>
-    <path d="M13 2 3 14h7l-1 8 11-14h-7l1-6z" />
-  </svg>
-);
-
-const FlashOffIcon = (props) => (
-  <svg
-    viewBox="0 0 24 24"
-    fill="none"
-    stroke="currentColor"
-    strokeWidth="2"
-    {...props}
-  >
-    <path
-      d="M13 2 3 14h7l-1 8 11-14h-7l1-6z"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      opacity="0.4"
-    />
-    <path d="M2 2l20 20" strokeLinecap="round" />
-  </svg>
-);
-
-const FlipIcon = (props) => (
-  <svg
-    viewBox="0 0 24 24"
-    fill="none"
-    stroke="currentColor"
-    strokeWidth="2"
-    {...props}
-  >
-    <path
-      d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    />
-    <path d="M8 12l4-4 4 4" strokeLinecap="round" strokeLinejoin="round" />
-    <path d="M12 8v12" strokeLinecap="round" strokeLinejoin="round" />
-  </svg>
-);
-
-// ---- Performance Settings ----
-const FRAME_INTERVAL = 100;
-const MIN_MATCHES = 25;
-const STABLE_FRAMES_REQUIRED = 3;
-
+// ---- Component ----
 const CardScanner = ({ onCardScanned, qrId }) => {
+  // Refs
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
   const displayCanvasRef = useRef(null);
@@ -109,29 +118,53 @@ const CardScanner = ({ onCardScanned, qrId }) => {
   const trackRef = useRef(null);
   const animationRef = useRef(null);
 
-  const [cameraOn, setCameraOn] = useState(true);
-  const [torchOn, setTorchOn] = useState(false);
-  const [torchAvailable, setTorchAvailable] = useState(false);
-  const [cameraError, setCameraError] = useState(null);
-  const [isLoading, setIsLoading] = useState(true);
-  const [cvReady, setCvReady] = useState(false);
-  const [facingMode, setFacingMode] = useState("environment");
-  const [isFlipping, setIsFlipping] = useState(false);
-
-  const [cardDetected, setCardDetected] = useState(false);
-  const [cardFound, setCardFound] = useState(false);
-  const [matches, setMatches] = useState(0);
-  const [permissionStatus, setPermissionStatus] = useState("unknown");
-
-  // Stable frame tracking
+  // Detection state refs
   const stableFrames = useRef(0);
   const lastDetection = useRef(0);
   const processed = useRef(false);
+  const retryCount = useRef(0);
 
-  // Load OpenCV
+  // UI State
+  const [state, setState] = useState({
+    cameraOn: true,
+    torchOn: false,
+    torchAvailable: false,
+    cameraError: null,
+    isLoading: true,
+    cvReady: false,
+    facingMode: "environment",
+    isFlipping: false,
+    cardDetected: false,
+    cardFound: false,
+    matches: 0,
+    permissionStatus: "unknown",
+  });
+
+  // Derive state for cleaner access
+  const {
+    cameraOn,
+    torchOn,
+    torchAvailable,
+    cameraError,
+    isLoading,
+    cvReady,
+    facingMode,
+    isFlipping,
+    cardDetected,
+    cardFound,
+    matches,
+    permissionStatus,
+  } = state;
+
+  // ---- Helper: Update state ----
+  const updateState = useCallback((updates) => {
+    setState((prev) => ({ ...prev, ...updates }));
+  }, []);
+
+  // ---- Load OpenCV ----
   useEffect(() => {
     if (window.cv?.Mat) {
-      setCvReady(true);
+      updateState({ cvReady: true });
       return;
     }
 
@@ -140,92 +173,88 @@ const CardScanner = ({ onCardScanned, qrId }) => {
     script.onload = () => {
       if (window.cv) {
         window.cv.onRuntimeInitialized = () => {
-          setCvReady(true);
           console.log("✅ OpenCV loaded");
+          updateState({ cvReady: true });
         };
       }
     };
     script.onerror = () => {
-      console.error("❌ Failed to load OpenCV");
-      setCameraError("OpenCV library failed to load");
+      updateState({
+        cameraError: "OpenCV library failed to load",
+        isLoading: false,
+      });
     };
     document.head.appendChild(script);
-  }, []);
+  }, [updateState]);
 
-  // Load reference card
+  // ---- Load Reference Card ----
   useEffect(() => {
-    if (cvReady) {
-      const loadRef = async () => {
-        try {
-          const loaded = await loadReferenceCard(
-            window.cv,
-            CARD_CONFIG.referenceImage,
-          );
-          if (loaded) {
-            console.log("✅ Reference card loaded");
-          } else {
-            console.error("❌ Failed to load reference card");
-            toast.error("Failed to load reference card image");
-          }
-        } catch (err) {
-          console.error("❌ Error loading reference:", err);
-        }
-      };
-      loadRef();
-    }
+    if (!cvReady) return;
 
-    return () => {
-      cleanupReference();
+    const loadRef = async () => {
+      try {
+        const loaded = await loadReferenceCard(
+          window.cv,
+          CARD_CONFIG.referenceImage,
+        );
+        if (loaded) {
+          console.log("✅ Reference card loaded");
+        } else {
+          toast.error("Failed to load reference card image");
+        }
+      } catch (err) {
+        console.error("❌ Error loading reference:", err);
+      }
     };
+    loadRef();
+
+    return () => cleanupReference();
   }, [cvReady]);
 
-  // Check camera permission
+  // ---- Check Camera Permission ----
   useEffect(() => {
     const checkPermission = async () => {
       try {
         const status = await getCameraPermissionStatus();
-        setPermissionStatus(status);
+        updateState({ permissionStatus: status });
         if (status === "denied") {
-          setCameraError(
-            "Camera access is blocked. Please enable camera in your browser settings.",
-          );
+          updateState({
+            cameraError:
+              "Camera access blocked. Please enable in browser settings.",
+          });
         }
       } catch (err) {
         console.warn("Permission check failed:", err);
       }
     };
     checkPermission();
-  }, []);
+  }, [updateState]);
 
-  // Camera setup - MOBILE OPTIMIZED
+  // ---- Camera Setup ----
   const startCamera = useCallback(async () => {
     try {
-      setIsLoading(true);
-      setCameraError(null);
+      updateState({ isLoading: true, cameraError: null });
 
-      // Check for secure context
       if (!window.isSecureContext && window.location.protocol !== "https:") {
         console.warn(
           "⚠️ Not in secure context. Camera may not work on mobile.",
         );
       }
 
-      // Request camera with mobile-optimized constraints
       const stream = await requestCameraWithFallback(facingMode);
       streamRef.current = stream;
 
       const track = getVideoTrack(stream);
       trackRef.current = track;
-      setTorchAvailable(isTorchSupported(track));
+      updateState({ torchAvailable: isTorchSupported(track) });
 
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
         videoRef.current.setAttribute("playsinline", "true");
         videoRef.current.setAttribute("webkit-playsinline", "true");
 
-        // Wait for video to be ready
         await new Promise((resolve, reject) => {
-          const timeout = setTimeout(reject, 10000);
+          const timeout = setTimeout(reject, CONFIG.CAMERA_TIMEOUT);
           videoRef.current.onloadedmetadata = () => {
             clearTimeout(timeout);
             resolve();
@@ -235,51 +264,48 @@ const CardScanner = ({ onCardScanned, qrId }) => {
 
         await videoRef.current.play();
         console.log("📷 Camera started successfully");
-        console.log(
-          `📹 Video: ${videoRef.current.videoWidth}x${videoRef.current.videoHeight}`,
-        );
-        setIsLoading(false);
+        updateState({ isLoading: false });
       }
     } catch (err) {
       console.error("Camera error:", err);
-      const userMessage = getCameraErrorMessage(err);
-      setCameraError(userMessage);
-      toast.error(userMessage);
-      setIsLoading(false);
+      updateState({
+        cameraError: getCameraErrorMessage(err),
+        isLoading: false,
+      });
+      toast.error(getCameraErrorMessage(err));
     }
-  }, [facingMode]);
+  }, [facingMode, updateState]);
 
-  // Start/stop camera
+  // ---- Camera Lifecycle ----
   useEffect(() => {
     if (cameraOn) {
-      const timer = setTimeout(() => {
-        startCamera();
-      }, 300);
+      const timer = setTimeout(startCamera, 300);
       return () => clearTimeout(timer);
-    } else {
-      if (streamRef.current) {
-        streamRef.current.getTracks().forEach((t) => t.stop());
-        streamRef.current = null;
-        trackRef.current = null;
-      }
-      if (animationRef.current) {
-        cancelAnimationFrame(animationRef.current);
-      }
+    }
+
+    // Cleanup
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach((t) => t.stop());
+      streamRef.current = null;
+      trackRef.current = null;
+    }
+    if (animationRef.current) {
+      cancelAnimationFrame(animationRef.current);
     }
   }, [cameraOn, startCamera]);
 
-  // Toggle torch
+  // ---- Toggle Torch ----
   const toggleTorch = useCallback(async () => {
     if (!torchAvailable) return;
     const next = !torchOn;
     const ok = await setTorch(trackRef.current, next);
-    if (ok) setTorchOn(next);
-  }, [torchOn, torchAvailable]);
+    if (ok) updateState({ torchOn: next });
+  }, [torchOn, torchAvailable, updateState]);
 
-  // Flip camera
+  // ---- Flip Camera ----
   const flipCamera = useCallback(async () => {
     if (isFlipping) return;
-    setIsFlipping(true);
+    updateState({ isFlipping: true });
 
     if (streamRef.current) {
       streamRef.current.getTracks().forEach((t) => t.stop());
@@ -288,7 +314,7 @@ const CardScanner = ({ onCardScanned, qrId }) => {
     }
 
     const newFacingMode = facingMode === "environment" ? "user" : "environment";
-    setFacingMode(newFacingMode);
+    updateState({ facingMode: newFacingMode });
 
     try {
       await startCamera();
@@ -296,10 +322,141 @@ const CardScanner = ({ onCardScanned, qrId }) => {
       console.error("Flip error:", err);
     }
 
-    setIsFlipping(false);
-  }, [facingMode, isFlipping, startCamera]);
+    updateState({ isFlipping: false });
+  }, [facingMode, isFlipping, startCamera, updateState]);
 
-  // Main render loop
+  // ---- Detection & Processing ----
+  const processCard = useCallback(
+    (cv, canvas, result) => {
+      try {
+        const srcMat = cv.imread(canvas);
+        const warped = warpCard(
+          cv,
+          srcMat,
+          result.corners,
+          CARD_CONFIG.cardWidth,
+          CARD_CONFIG.cardHeight,
+        );
+
+        if (warped && !warped.empty()) {
+          const globalThreshold = computeGlobalThreshold(
+            cv,
+            warped,
+            CARD_CONFIG.checkboxes,
+          );
+          const analysis = analyzeCheckboxes(
+            cv,
+            warped,
+            CARD_CONFIG,
+            globalThreshold,
+          );
+
+          console.log("📊 Detection results:", analysis);
+
+          let cardImageData = null;
+          try {
+            const tempCanvas = document.createElement("canvas");
+            tempCanvas.width = CARD_CONFIG.cardWidth;
+            tempCanvas.height = CARD_CONFIG.cardHeight;
+            cv.imshow(tempCanvas, warped);
+            cardImageData = tempCanvas.toDataURL("image/jpeg", 0.9);
+            tempCanvas.remove();
+          } catch (convertErr) {
+            console.warn("Could not convert warped image:", convertErr);
+          }
+
+          if (analysis.checkedCount > 0) {
+            console.log("✅ Card scanned successfully:", analysis.checkedBoxes);
+            if (onCardScanned) {
+              onCardScanned(analysis.checkedBoxes, cardImageData);
+            }
+            toast.success(`Detected ${analysis.checkedCount} option(s)!`);
+          } else {
+            toast("No options detected - try adjusting lighting", {
+              icon: "💡",
+            });
+            // Reset for retry
+            setTimeout(() => {
+              processed.current = false;
+              stableFrames.current = 0;
+              updateState({ cardDetected: false });
+            }, 1000);
+          }
+
+          warped.delete();
+        } else {
+          console.error("❌ Failed to warp card");
+          processed.current = false;
+          stableFrames.current = 0;
+          updateState({ cardDetected: false });
+        }
+
+        if (srcMat) srcMat.delete();
+      } catch (err) {
+        console.error("❌ Card processing error:", err);
+        processed.current = false;
+        stableFrames.current = 0;
+        updateState({ cardDetected: false });
+        toast.error("Failed to process card. Please try again.");
+      }
+    },
+    [onCardScanned, updateState],
+  );
+
+  const detectCard = useCallback(
+    (ctx, canvas) => {
+      try {
+        const cv = window.cv;
+        const src = cv.imread(canvas);
+        const result = findCard(cv, src);
+
+        if (result && result.found && result.matches >= CONFIG.MIN_MATCHES) {
+          updateState({ matches: result.matches, cardFound: true });
+
+          // Draw debug bounds
+          const debugCanvas = document.createElement("canvas");
+          debugCanvas.width = canvas.width;
+          debugCanvas.height = canvas.height;
+          const debugCtx = debugCanvas.getContext("2d");
+          debugCtx.drawImage(canvas, 0, 0);
+          const debugMat = cv.imread(debugCanvas);
+          drawCardBounds(cv, debugMat, result.corners);
+          debugMat.delete();
+          debugCanvas.remove();
+
+          stableFrames.current += 1;
+          updateState({
+            cardDetected: stableFrames.current >= CONFIG.STABLE_FRAMES_REQUIRED,
+          });
+
+          if (
+            stableFrames.current >= CONFIG.STABLE_FRAMES_REQUIRED &&
+            !processed.current
+          ) {
+            processed.current = true;
+            console.log("🎯 Card detected! Processing...");
+            processCard(cv, canvas, result);
+          }
+        } else {
+          updateState({
+            matches: result?.matches || 0,
+            cardFound: false,
+            cardDetected: false,
+          });
+          stableFrames.current = 0;
+          processed.current = false;
+        }
+
+        src.delete();
+      } catch (err) {
+        console.error("Detection error:", err);
+        processed.current = false;
+      }
+    },
+    [processCard, updateState],
+  );
+
+  // ---- Main Render Loop ----
   useEffect(() => {
     if (
       !cameraOn ||
@@ -337,17 +494,15 @@ const CardScanner = ({ onCardScanned, qrId }) => {
         const vw = video.videoWidth || 640;
         const vh = video.videoHeight || 480;
 
-        if (canvas.width !== vw || canvas.height !== vh) {
-          canvas.width = vw;
-          canvas.height = vh;
-        }
+        // Set canvas sizes
+        [canvas, displayCanvas].forEach((c) => {
+          if (c.width !== vw || c.height !== vh) {
+            c.width = vw;
+            c.height = vh;
+          }
+        });
 
-        if (displayCanvas.width !== vw || displayCanvas.height !== vh) {
-          displayCanvas.width = vw;
-          displayCanvas.height = vh;
-        }
-
-        // Draw video to display canvas
+        // Draw video
         if (facingMode === "user") {
           displayCtx.save();
           displayCtx.scale(-1, 1);
@@ -357,13 +512,12 @@ const CardScanner = ({ onCardScanned, qrId }) => {
           displayCtx.drawImage(video, 0, 0, vw, vh);
         }
 
-        // Copy to processing canvas
         ctx.drawImage(displayCanvas, 0, 0);
 
-        // Process every FRAME_INTERVAL ms
+        // Process frame
         const now = Date.now();
         if (
-          now - lastDetection.current >= FRAME_INTERVAL &&
+          now - lastDetection.current >= CONFIG.FRAME_INTERVAL &&
           cvReady &&
           !processed.current
         ) {
@@ -381,218 +535,7 @@ const CardScanner = ({ onCardScanned, qrId }) => {
       }
     };
 
-    // Detection function
-    const detectCard = (ctx, canvas) => {
-      try {
-        const cv = window.cv;
-        const src = cv.imread(canvas);
-
-        const result = findCard(cv, src);
-
-        if (result && result.found && result.matches >= MIN_MATCHES) {
-          setMatches(result.matches);
-          setCardFound(true);
-
-          // Draw debug bounds
-          const debugCanvas = document.createElement("canvas");
-          debugCanvas.width = canvas.width;
-          debugCanvas.height = canvas.height;
-          const debugCtx = debugCanvas.getContext("2d");
-          debugCtx.drawImage(canvas, 0, 0);
-
-          const debugMat = cv.imread(debugCanvas);
-          drawCardBounds(cv, debugMat, result.corners);
-          debugMat.delete();
-          debugCanvas.remove();
-
-          stableFrames.current += 1;
-          setCardDetected(stableFrames.current >= STABLE_FRAMES_REQUIRED);
-
-          if (
-            stableFrames.current >= STABLE_FRAMES_REQUIRED &&
-            !processed.current
-          ) {
-            processed.current = true;
-            console.log("🎯 Card detected! Processing...");
-            processCard(cv, canvas, result);
-          }
-        } else {
-          setMatches(result?.matches || 0);
-          setCardFound(false);
-          setCardDetected(false);
-          stableFrames.current = 0;
-          processed.current = false;
-        }
-
-        src.delete();
-      } catch (err) {
-        console.error("Detection error:", err);
-        processed.current = false;
-      }
-    };
-
-    // Process card after detection
-    const processCard = (cv, canvas, result) => {
-      try {
-        const srcMat = cv.imread(canvas);
-
-        const warped = warpCard(
-          cv,
-          srcMat,
-          result.corners,
-          CARD_CONFIG.cardWidth,
-          CARD_CONFIG.cardHeight,
-        );
-
-        if (warped && !warped.empty()) {
-          console.log("✅ Card warped successfully");
-
-          const globalThreshold = computeGlobalThreshold(
-            cv,
-            warped,
-            CARD_CONFIG.checkboxes,
-          );
-
-          const analysis = analyzeCheckboxes(
-            cv,
-            warped,
-            CARD_CONFIG,
-            globalThreshold,
-          );
-
-          console.log("📊 Detection results:", analysis);
-
-          let cardImageData = null;
-          try {
-            const tempCanvas = document.createElement("canvas");
-            tempCanvas.width = CARD_CONFIG.cardWidth;
-            tempCanvas.height = CARD_CONFIG.cardHeight;
-            cv.imshow(tempCanvas, warped);
-            cardImageData = tempCanvas.toDataURL("image/jpeg", 0.9);
-            tempCanvas.remove();
-          } catch (convertErr) {
-            console.warn("Could not convert warped image:", convertErr);
-          }
-
-          if (analysis.checkedCount > 0) {
-            console.log("✅ Card scanned successfully:", analysis.checkedBoxes);
-
-            if (onCardScanned) {
-              onCardScanned(analysis.checkedBoxes, cardImageData);
-            }
-
-            toast.success(`Detected ${analysis.checkedCount} option(s)!`);
-
-            setTimeout(() => {
-              processed.current = false;
-              stableFrames.current = 0;
-              setCardDetected(false);
-            }, 2000);
-          } else {
-            toast("No options detected - try adjusting lighting", {
-              icon: "💡",
-              duration: 3000,
-            });
-
-            setTimeout(() => {
-              processed.current = false;
-              stableFrames.current = 0;
-              setCardDetected(false);
-            }, 1000);
-          }
-
-          warped.delete();
-        } else {
-          console.error("❌ Failed to warp card");
-          processed.current = false;
-          stableFrames.current = 0;
-          setCardDetected(false);
-        }
-
-        if (srcMat) {
-          srcMat.delete();
-        }
-      } catch (err) {
-        console.error("❌ Card processing error:", err);
-        processed.current = false;
-        stableFrames.current = 0;
-        setCardDetected(false);
-        toast.error("Failed to process card. Please try again.");
-      }
-    };
-
-    // Draw overlay
-    const drawOverlay = (ctx, width, height) => {
-      const boxWidth = Math.min(width * 0.8, 400);
-      const boxHeight = boxWidth * 1.4;
-      const x = (width - boxWidth) / 2;
-      const y = (height - boxHeight) / 2;
-
-      // Animated border
-      ctx.strokeStyle = cardDetected
-        ? "#22c55e"
-        : cardFound
-          ? "#facc15"
-          : "rgba(255,255,255,0.3)";
-      ctx.lineWidth = cardDetected ? 4 : 3;
-      ctx.setLineDash([10, 10]);
-      ctx.strokeRect(x, y, boxWidth, boxHeight);
-      ctx.setLineDash([]);
-
-      // Corner markers
-      const cornerSize = 30;
-      const cornerColor = cardDetected
-        ? "#22c55e"
-        : cardFound
-          ? "#facc15"
-          : "#ffffff80";
-      ctx.strokeStyle = cornerColor;
-      ctx.lineWidth = 4;
-
-      // Top-left
-      ctx.beginPath();
-      ctx.moveTo(x, y + cornerSize);
-      ctx.lineTo(x, y);
-      ctx.lineTo(x + cornerSize, y);
-      ctx.stroke();
-
-      // Top-right
-      ctx.beginPath();
-      ctx.moveTo(x + boxWidth - cornerSize, y);
-      ctx.lineTo(x + boxWidth, y);
-      ctx.lineTo(x + boxWidth, y + cornerSize);
-      ctx.stroke();
-
-      // Bottom-left
-      ctx.beginPath();
-      ctx.moveTo(x, y + boxHeight - cornerSize);
-      ctx.lineTo(x, y + boxHeight);
-      ctx.lineTo(x + cornerSize, y + boxHeight);
-      ctx.stroke();
-
-      // Bottom-right
-      ctx.beginPath();
-      ctx.moveTo(x + boxWidth - cornerSize, y + boxHeight);
-      ctx.lineTo(x + boxWidth, y + boxHeight);
-      ctx.lineTo(x + boxWidth, y + boxHeight - cornerSize);
-      ctx.stroke();
-
-      // Status text on overlay
-      if (cardDetected) {
-        ctx.fillStyle = "#22c55e";
-        ctx.font = "bold 14px sans-serif";
-        ctx.textAlign = "center";
-        ctx.fillText("✅ Card Detected", width / 2, y - 20);
-      } else if (cardFound) {
-        ctx.fillStyle = "#facc15";
-        ctx.font = "14px sans-serif";
-        ctx.textAlign = "center";
-        ctx.fillText(`🔍 ${matches} matches found`, width / 2, y - 20);
-      }
-    };
-
     animationRef.current = requestAnimationFrame(renderFrame);
-
     return () => {
       if (animationRef.current) {
         cancelAnimationFrame(animationRef.current);
@@ -604,32 +547,83 @@ const CardScanner = ({ onCardScanned, qrId }) => {
     cvReady,
     isLoading,
     facingMode,
-    onCardScanned,
+    detectCard,
     cardDetected,
     cardFound,
     matches,
   ]);
 
+  // ---- Draw Overlay ----
+  const drawOverlay = useCallback(
+    (ctx, width, height) => {
+      const boxWidth = Math.min(width * 0.8, 400);
+      const boxHeight = boxWidth * 1.4;
+      const x = (width - boxWidth) / 2;
+      const y = (height - boxHeight) / 2;
+
+      // Border
+      const color = cardDetected
+        ? "#22c55e"
+        : cardFound
+          ? "#facc15"
+          : "rgba(255,255,255,0.3)";
+      ctx.strokeStyle = color;
+      ctx.lineWidth = cardDetected ? 4 : 3;
+      ctx.setLineDash([10, 10]);
+      ctx.strokeRect(x, y, boxWidth, boxHeight);
+      ctx.setLineDash([]);
+
+      // Corners
+      const cornerSize = 30;
+      ctx.strokeStyle = cardDetected
+        ? "#22c55e"
+        : cardFound
+          ? "#facc15"
+          : "#ffffff80";
+      ctx.lineWidth = 4;
+
+      const corners = [
+        [x, y, x + cornerSize, y],
+        [x + boxWidth - cornerSize, y, x + boxWidth, y],
+        [x, y + boxHeight - cornerSize, x, y + boxHeight],
+        [x + boxWidth - cornerSize, y + boxHeight, x + boxWidth, y + boxHeight],
+      ];
+
+      corners.forEach(([x1, y1, x2, y2]) => {
+        ctx.beginPath();
+        ctx.moveTo(x1, y1);
+        ctx.lineTo(x2, y2);
+        ctx.stroke();
+      });
+
+      // Status text
+      if (cardDetected) {
+        ctx.fillStyle = "#22c55e";
+        ctx.font = "bold 14px sans-serif";
+        ctx.textAlign = "center";
+        ctx.fillText("✅ Card Detected", width / 2, y - 20);
+      } else if (cardFound) {
+        ctx.fillStyle = "#facc15";
+        ctx.font = "14px sans-serif";
+        ctx.textAlign = "center";
+        ctx.fillText(`🔍 ${matches} matches found`, width / 2, y - 20);
+      }
+    },
+    [cardDetected, cardFound, matches],
+  );
+
+  // ---- Render ----
   return (
     <div className="fixed inset-0 bg-black overflow-hidden">
-      <video
-        ref={videoRef}
-        playsInline
-        autoPlay
-        muted
-        className="hidden"
-        style={{ display: "none" }}
-      />
-
+      <video ref={videoRef} playsInline autoPlay muted className="hidden" />
       <canvas ref={canvasRef} style={{ display: "none" }} />
-
       <canvas
         ref={displayCanvasRef}
         className="absolute inset-0 w-full h-full object-contain"
         style={{ backgroundColor: "#000" }}
       />
 
-      {/* Loading / OpenCV Loading */}
+      {/* Loading State */}
       <AnimatePresence>
         {(isLoading || !cvReady) && (
           <motion.div
@@ -668,7 +662,7 @@ const CardScanner = ({ onCardScanned, qrId }) => {
           >
             <div className="text-center max-w-sm w-full">
               <div className="w-20 h-20 rounded-full bg-red-500/20 flex items-center justify-center mx-auto mb-4">
-                <CameraOffIcon className="w-10 h-10 text-red-500" />
+                <Icon name="cameraOff" className="w-10 h-10 text-red-500" />
               </div>
               <h2 className="text-white text-xl font-bold mb-2">
                 Camera Error
@@ -691,7 +685,7 @@ const CardScanner = ({ onCardScanned, qrId }) => {
 
               <button
                 onClick={() => {
-                  setCameraError(null);
+                  updateState({ cameraError: null });
                   startCamera();
                 }}
                 className="mt-6 px-8 py-3 bg-white text-black rounded-full font-medium hover:bg-gray-200 transition"
@@ -703,10 +697,9 @@ const CardScanner = ({ onCardScanned, qrId }) => {
         )}
       </AnimatePresence>
 
-      {/* Camera is on - Show scanner */}
+      {/* Scanner UI */}
       {!cameraError && cameraOn && !isLoading && cvReady && (
         <>
-          {/* Gradient overlay */}
           <div className="absolute inset-0 bg-gradient-to-b from-black/60 via-transparent to-black/70 pointer-events-none z-10" />
 
           {/* Top Controls */}
@@ -720,50 +713,29 @@ const CardScanner = ({ onCardScanned, qrId }) => {
               </p>
             </div>
             <div className="flex gap-2">
-              {/* Flip Camera Button */}
-              <motion.button
-                whileTap={{ scale: 0.9 }}
+              <Button
+                icon="flip"
                 onClick={flipCamera}
                 disabled={isFlipping}
-                className="w-11 h-11 rounded-full flex items-center justify-center backdrop-blur-md bg-white/20 text-white hover:bg-white/30 transition-all disabled:opacity-50 border border-white/10"
-                aria-label="Flip camera"
-              >
-                <FlipIcon className="w-5 h-5" />
-              </motion.button>
-
-              {/* Flashlight Button */}
+                label="Flip camera"
+              />
               {torchAvailable && (
-                <motion.button
-                  whileTap={{ scale: 0.9 }}
+                <Button
+                  icon={torchOn ? "flashOn" : "flashOff"}
                   onClick={toggleTorch}
-                  className={`w-11 h-11 rounded-full flex items-center justify-center backdrop-blur-md transition-all border border-white/10 ${
-                    torchOn
-                      ? "bg-yellow-400 text-black"
-                      : "bg-white/20 text-white hover:bg-white/30"
-                  }`}
-                  aria-label="Toggle flashlight"
-                >
-                  {torchOn ? (
-                    <FlashOnIcon className="w-5 h-5" />
-                  ) : (
-                    <FlashOffIcon className="w-5 h-5" />
-                  )}
-                </motion.button>
+                  className={torchOn ? "bg-yellow-400 text-black" : ""}
+                  label="Toggle flashlight"
+                />
               )}
-
-              {/* Close Camera Button */}
-              <motion.button
-                whileTap={{ scale: 0.9 }}
-                onClick={() => setCameraOn(false)}
-                className="w-11 h-11 rounded-full flex items-center justify-center backdrop-blur-md bg-white/20 text-white hover:bg-white/30 transition-all border border-white/10"
-                aria-label="Turn camera off"
-              >
-                <CameraOffIcon className="w-5 h-5" />
-              </motion.button>
+              <Button
+                icon="cameraOff"
+                onClick={() => updateState({ cameraOn: false })}
+                label="Turn camera off"
+              />
             </div>
           </div>
 
-          {/* Card Guide Box */}
+          {/* Card Guide */}
           <div className="absolute inset-0 flex items-center justify-center pointer-events-none px-10 z-10">
             <motion.div
               animate={{
@@ -808,14 +780,13 @@ const CardScanner = ({ onCardScanned, qrId }) => {
                   : `Position card in frame (${matches} matches)`}
             </motion.div>
 
-            {/* Progress indicator */}
             {cardFound && !cardDetected && (
               <div className="w-48 h-1 bg-white/20 rounded-full overflow-hidden">
                 <motion.div
                   className="h-full bg-yellow-400 rounded-full"
                   initial={{ width: "0%" }}
                   animate={{
-                    width: `${Math.min((stableFrames.current / STABLE_FRAMES_REQUIRED) * 100, 100)}%`,
+                    width: `${Math.min((stableFrames.current / CONFIG.STABLE_FRAMES_REQUIRED) * 100, 100)}%`,
                   }}
                   transition={{ duration: 0.3 }}
                 />
@@ -825,7 +796,7 @@ const CardScanner = ({ onCardScanned, qrId }) => {
         </>
       )}
 
-      {/* Camera Off State */}
+      {/* Camera Off */}
       {!cameraOn && (
         <motion.div
           initial={{ opacity: 0 }}
@@ -834,7 +805,7 @@ const CardScanner = ({ onCardScanned, qrId }) => {
         >
           <div className="text-center">
             <div className="w-20 h-20 rounded-full bg-white/10 flex items-center justify-center mx-auto mb-6">
-              <CameraOnIcon className="w-10 h-10 text-white/70" />
+              <Icon name="cameraOn" className="w-10 h-10 text-white/70" />
             </div>
             <h2 className="text-white text-xl font-semibold mb-2">
               Camera is Off
@@ -844,8 +815,7 @@ const CardScanner = ({ onCardScanned, qrId }) => {
             </p>
             <button
               onClick={() => {
-                setCameraOn(true);
-                setIsLoading(true);
+                updateState({ cameraOn: true, isLoading: true });
                 startCamera();
               }}
               className="px-8 py-3 bg-white text-black rounded-full font-medium hover:bg-gray-200 transition"
@@ -858,5 +828,26 @@ const CardScanner = ({ onCardScanned, qrId }) => {
     </div>
   );
 };
+
+// ---- Button Component ----
+const Button = ({
+  icon,
+  onClick,
+  className = "",
+  disabled = false,
+  label = "",
+}) => (
+  <motion.button
+    whileTap={{ scale: 0.9 }}
+    onClick={onClick}
+    disabled={disabled}
+    className={`w-11 h-11 rounded-full flex items-center justify-center backdrop-blur-md transition-all border border-white/10 ${
+      disabled ? "opacity-50 cursor-not-allowed" : "hover:bg-white/30"
+    } ${className || "bg-white/20 text-white"}`}
+    aria-label={label}
+  >
+    <Icon name={icon} className="w-5 h-5" />
+  </motion.button>
+);
 
 export default CardScanner;

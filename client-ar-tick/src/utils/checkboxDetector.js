@@ -1,5 +1,5 @@
 // src/utils/checkboxDetector.js
-// COMPLETE FIXED VERSION - All functions properly exported
+// COMPLETE FIXED VERSION - with debug support
 
 /**
  * ============================================================
@@ -49,12 +49,11 @@ export function detectCheckbox(cv, checkboxMat, threshold = 120) {
 
 /**
  * ============================================================
- * COMPUTE GLOBAL THRESHOLD - ✅ UNCOMMENTED AND EXPORTED
+ * COMPUTE GLOBAL THRESHOLD
  * ============================================================
  */
 export function computeGlobalThreshold(cv, warped, checkboxConfigs) {
   try {
-    // Get all checkbox regions
     const rois = checkboxConfigs.map((config) => ({
       x: config.roi.x,
       y: config.roi.y,
@@ -62,7 +61,6 @@ export function computeGlobalThreshold(cv, warped, checkboxConfigs) {
       height: config.roi.height,
     }));
 
-    // Calculate union bounding box
     const minX = Math.min(...rois.map((r) => r.x));
     const minY = Math.min(...rois.map((r) => r.y));
     const maxX = Math.max(...rois.map((r) => r.x + r.width));
@@ -101,20 +99,20 @@ export function computeGlobalThreshold(cv, warped, checkboxConfigs) {
 
 /**
  * ============================================================
- * ANALYZE ALL CHECKBOXES
+ * ANALYZE ALL CHECKBOXES - WITH DEBUG SUPPORT
  * ============================================================
  */
-export function analyzeCheckboxes(cv, warpedCard, config, globalThreshold) {
+export function analyzeCheckboxes(
+  cv,
+  warpedCard,
+  config,
+  globalThreshold,
+  debug = false,
+) {
   const results = [];
   const threshold = globalThreshold || 120;
 
   console.log("📊 Analyzing checkboxes with threshold:", threshold);
-  console.log(
-    "📊 Warped card dimensions:",
-    warpedCard.cols,
-    "x",
-    warpedCard.rows,
-  );
 
   for (const checkbox of config.checkboxes) {
     const { x, y, width, height } = checkbox.roi;
@@ -123,13 +121,6 @@ export function analyzeCheckboxes(cv, warpedCard, config, globalThreshold) {
     const roiY = Math.round(y * warpedCard.rows);
     const roiWidth = Math.round(width * warpedCard.cols);
     const roiHeight = Math.round(height * warpedCard.rows);
-
-    console.log(`📊 Checkbox ${checkbox.number} ROI:`, {
-      roiX,
-      roiY,
-      roiWidth,
-      roiHeight,
-    });
 
     const rectangle = new cv.Rect(roiX, roiY, roiWidth, roiHeight);
     const checkboxImage = warpedCard.roi(rectangle);
@@ -148,27 +139,10 @@ export function analyzeCheckboxes(cv, warpedCard, config, globalThreshold) {
     checkboxImage.delete();
   }
 
-  console.log(
-    "📊 Raw fill percentages:",
-    results.map((r) => ({
-      number: r.number,
-      fill: r.fillPercentage + "%",
-    })),
-  );
-
   // Find baseline (minimum fill)
   const baseline = Math.min(...results.map((r) => r.fillPercentage));
   const margin = config.detection?.margin || 15;
   const minFill = config.detection?.minFillPercentage || 8;
-
-  console.log(
-    "📊 Baseline:",
-    baseline + "%",
-    "Margin:",
-    margin,
-    "Min Fill:",
-    minFill,
-  );
 
   // Determine which boxes are checked
   for (const result of results) {
@@ -177,17 +151,21 @@ export function analyzeCheckboxes(cv, warpedCard, config, globalThreshold) {
       diffFromBaseline >= margin && result.fillPercentage >= minFill;
     result.diffFromBaseline = Math.round(diffFromBaseline);
 
-    console.log(
-      `📊 Box ${result.number}: fill=${result.fillPercentage}%, diff=${diffFromBaseline}%, checked=${result.isChecked}`,
-    );
+    // Calculate confidence based on how far above baseline
+    if (result.isChecked) {
+      result.confidence = Math.min(
+        100,
+        Math.round((diffFromBaseline / margin) * 100),
+      );
+    } else {
+      result.confidence = Math.max(
+        0,
+        100 - Math.round(((margin - diffFromBaseline) / margin) * 100),
+      );
+    }
   }
 
   const checkedBoxes = results.filter((r) => r.isChecked);
-
-  console.log(
-    "✅ Checked boxes:",
-    checkedBoxes.map((r) => r.number),
-  );
 
   return {
     results,
