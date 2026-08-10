@@ -38,31 +38,31 @@ const CONFIG = {
 /**
  * Compute ONE global threshold from the entire ROI band containing all checkboxes
  */
-const computeGlobalThreshold = (cv, warped, boxes) => {
-  const minX = Math.min(...boxes.map((b) => b.position.x));
-  const minY = Math.min(...boxes.map((b) => b.position.y));
-  const maxX = Math.max(...boxes.map((b) => b.position.x + b.position.size));
-  const maxY = Math.max(...boxes.map((b) => b.position.y + b.position.size));
+// export const computeGlobalThreshold = (cv, warped, boxes) => {
+//   const minX = Math.min(...boxes.map((b) => b.position.x));
+//   const minY = Math.min(...boxes.map((b) => b.position.y));
+//   const maxX = Math.max(...boxes.map((b) => b.position.x + b.position.size));
+//   const maxY = Math.max(...boxes.map((b) => b.position.y + b.position.size));
 
-  const band = warped.roi(new cv.Rect(minX, minY, maxX - minX, maxY - minY));
-  const gray = new cv.Mat();
-  cv.cvtColor(band, gray, cv.COLOR_RGBA2GRAY);
+//   const band = warped.roi(new cv.Rect(minX, minY, maxX - minX, maxY - minY));
+//   const gray = new cv.Mat();
+//   cv.cvtColor(band, gray, cv.COLOR_RGBA2GRAY);
 
-  const thresh = new cv.Mat();
-  const t = cv.threshold(
-    gray,
-    thresh,
-    0,
-    255,
-    cv.THRESH_BINARY_INV + cv.THRESH_OTSU,
-  );
+//   const thresh = new cv.Mat();
+//   const t = cv.threshold(
+//     gray,
+//     thresh,
+//     0,
+//     255,
+//     cv.THRESH_BINARY_INV + cv.THRESH_OTSU,
+//   );
 
-  gray.delete();
-  thresh.delete();
-  band.delete();
+//   gray.delete();
+//   thresh.delete();
+//   band.delete();
 
-  return t;
-};
+//   return t;
+// };
 
 /**
  * Measure a single checkbox using the global threshold

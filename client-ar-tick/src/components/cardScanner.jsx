@@ -1,112 +1,99 @@
-import { useCallback, useEffect, useRef, useState } from "react";
-import { warpCard, drawCardBounds } from "../utils/cardWarp";
-import { analyzeCheckboxes } from "../utils/checkboxDetector";
-import { CARD_CONFIG } from "../cards/eatingStyle/config";
-import { toast } from "react-hot-toast";
+// src/components/CardScanner.jsx
+// COMPLETE FIXED VERSION - Mobile camera support
+
+import React, { useEffect, useRef, useState, useCallback } from "react";
 import { motion } from "framer-motion";
-import { getVideoTrack, isTorchSupported, setTorch } from "../utils/flashlight";
+import { toast } from "react-hot-toast";
 import {
   requestCameraWithFallback,
   getCameraErrorMessage,
+  checkCameraAvailability,
+  getCameraPermissionStatus,
 } from "../utils/cameraHelper";
+import { getVideoTrack, isTorchSupported, setTorch } from "../utils/flashlight";
 import {
   loadReferenceCard,
   findCard,
   cleanupReference,
 } from "../utils/cardMatcher";
+import { warpCard, drawCardBounds } from "../utils/cardWarp";
+import {
+  // computeGlobalThreshold,
+  analyzeCheckboxes,
+} from "../utils/checkboxDetector";
+// ✅ FIXED: Import from src/cards, not public
+import { CARD_CONFIG } from "../cards/eatingStyle/config";
 
-// ============================================================
-// SETTINGS
-// ============================================================
-
-const DETECTION_INTERVAL = 200;
-
-// Minimum ORB matches required before we trust the card.
-const MIN_MATCHES = 25;
-
-// Card must be detected this many times consecutively.
-const REQUIRED_STABLE_FRAMES = 3;
-
-// ============================================================
-// SIMPLE ICONS
-// ============================================================
-
-const CameraOffIcon = ({ className = "" }) => (
+// ---- Icons ----
+const CameraOffIcon = (props) => (
   <svg
-    className={className}
+    viewBox="0 0 24 24"
     fill="none"
     stroke="currentColor"
     strokeWidth="2"
-    viewBox="0 0 24 24"
+    {...props}
   >
     <path
-      d="M15 10l4.5-3A1 1 0 0121 7.8v8.4a1 1 0 01-1.5.8L15 14"
+      d="M1 1l22 22M9.5 5H15l2 2h3a2 2 0 0 1 2 2v9.5M15 15.5A4 4 0 1 1 8 12M3 7v10a2 2 0 0 0 2 2h10"
       strokeLinecap="round"
       strokeLinejoin="round"
     />
-
-    <rect x="3" y="6" width="12" height="12" rx="2" />
-
-    <path d="M3 3l18 18" strokeLinecap="round" />
   </svg>
 );
 
-const CameraOnIcon = ({ className = "" }) => (
+const CameraOnIcon = (props) => (
   <svg
-    className={className}
+    viewBox="0 0 24 24"
     fill="none"
     stroke="currentColor"
     strokeWidth="2"
-    viewBox="0 0 24 24"
+    {...props}
   >
-    <rect x="3" y="6" width="18" height="12" rx="2" />
-
-    <circle cx="12" cy="12" r="3" />
+    <path
+      d="M9.5 5H15l2 2h3a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2h3z"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    />
+    <circle cx="12" cy="13" r="3.5" />
   </svg>
 );
 
-// ============================================================
-// MAIN COMPONENT
-// ============================================================
+const FlashOnIcon = (props) => (
+  <svg viewBox="0 0 24 24" fill="currentColor" {...props}>
+    <path d="M13 2 3 14h7l-1 8 11-14h-7l1-6z" />
+  </svg>
+);
 
-const CardScanner = ({ onCardScanned }) => {
-  // ----------------------------------------------------------
-  // React / DOM references
-  // ----------------------------------------------------------
+const FlashOffIcon = (props) => (
+  <svg
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="2"
+    {...props}
+  >
+    <path
+      d="M13 2 3 14h7l-1 8 11-14h-7l1-6z"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      opacity="0.4"
+    />
+    <path d="M2 2l20 20" strokeLinecap="round" />
+  </svg>
+);
 
+// ---- Performance Settings ----
+const FRAME_INTERVAL = 100;
+const MIN_MATCHES = 25;
+const STABLE_FRAMES_REQUIRED = 3;
+
+const CardScanner = ({ onCardScanned, qrId }) => {
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
-
-  // Camera stream
+  const displayCanvasRef = useRef(null);
   const streamRef = useRef(null);
-
-  // Current camera track
   const trackRef = useRef(null);
-
-  // requestAnimationFrame ID
   const animationRef = useRef(null);
-
-  // ----------------------------------------------------------
-  // Detection state
-  // ----------------------------------------------------------
-
-  // Number of consecutive frames where card was found.
-  //
-  // IMPORTANT:
-  // This is a ref, not a normal variable.
-  //
-  // It survives React re-renders.
-  const stableFramesRef = useRef(0);
-
-  // Last time ORB detection was performed.
-  const lastDetectionRef = useRef(0);
-
-  // Prevent processing the same card multiple times.
-  const processedRef = useRef(false);
-
-  // ----------------------------------------------------------
-  // UI state
-  // ----------------------------------------------------------
 
   const [cameraOn, setCameraOn] = useState(true);
   const [torchOn, setTorchOn] = useState(false);
@@ -114,524 +101,486 @@ const CardScanner = ({ onCardScanned }) => {
   const [cameraError, setCameraError] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
   const [cvReady, setCvReady] = useState(false);
-  const [facingMode] = useState("environment");
-  const [cardFound, setCardFound] = useState(false);
+  const [facingMode, setFacingMode] = useState("environment");
+  const [isFlipping, setIsFlipping] = useState(false);
+
   const [cardDetected, setCardDetected] = useState(false);
+  const [cardFound, setCardFound] = useState(false);
   const [matches, setMatches] = useState(0);
+  const [permissionStatus, setPermissionStatus] = useState("unknown");
 
-  // ==========================================================
-  // LOAD OPENCV
-  // ==========================================================
+  // Stable frame tracking
+  const stableFrames = useRef(0);
+  const lastDetection = useRef(0);
+  const processed = useRef(false);
 
+  // Load OpenCV
   useEffect(() => {
-    // OpenCV is already available.
     if (window.cv?.Mat) {
       setCvReady(true);
       return;
     }
 
-    console.log("Loading OpenCV...");
     const script = document.createElement("script");
     script.src = "https://docs.opencv.org/4.5.0/opencv.js";
-    script.async = true;
     script.onload = () => {
-      if (!window.cv) {
-        console.error("OpenCV script loaded but window.cv is missing.");
-        return;
+      if (window.cv) {
+        window.cv.onRuntimeInitialized = () => {
+          setCvReady(true);
+          console.log("✅ OpenCV loaded");
+        };
       }
-      // OpenCV may still be initializing.
-      window.cv.onRuntimeInitialized = () => {
-        console.log("✅ OpenCV ready");
-        setCvReady(true);
-      };
     };
-
     script.onerror = () => {
       console.error("❌ Failed to load OpenCV");
+      setCameraError("OpenCV library failed to load");
     };
-
     document.head.appendChild(script);
-    // Remove script when component is destroyed.
-    return () => {
-      script.remove();
-    };
   }, []);
 
-  // ==========================================================
-  // LOAD REFERENCE CARD
-  // ==========================================================
+  // Load reference card
   useEffect(() => {
-    if (!cvReady) {
-      return;
+    if (cvReady) {
+      const loadRef = async () => {
+        try {
+          const loaded = await loadReferenceCard(
+            window.cv,
+            CARD_CONFIG.referenceImage,
+          );
+          if (loaded) {
+            console.log("✅ Reference card loaded");
+          } else {
+            console.error("❌ Failed to load reference card");
+            toast.error("Failed to load reference card image");
+          }
+        } catch (err) {
+          console.error("❌ Error loading reference:", err);
+        }
+      };
+      loadRef();
     }
 
-    const loadCard = async () => {
-      const success = await loadReferenceCard(
-        window.cv,
-        CARD_CONFIG.referenceImage,
-      );
-
-      if (success) {
-        console.log("✅ Reference car-d ready");
-      } else {
-        console.error("❌ Reference card could not be loaded");
-      }
-    };
-    loadCard();
     return () => {
       cleanupReference();
     };
   }, [cvReady]);
 
-  // ==========================================================
-  // STOP CAMERA
-  // ==========================================================
-
-  const stopCamera = useCallback(() => {
-    // Stop all camera tracks.
-    if (streamRef.current) {
-      streamRef.current.getTracks().forEach((track) => {
-        track.stop();
-      });
-
-      streamRef.current = null;
-    }
-
-    // Stop animation loop.
-    if (animationRef.current) {
-      cancelAnimationFrame(animationRef.current);
-      animationRef.current = null;
-    }
-    trackRef.current = null;
-    setTorchOn(false);
+  // Check camera permission
+  useEffect(() => {
+    const checkPermission = async () => {
+      try {
+        const status = await getCameraPermissionStatus();
+        setPermissionStatus(status);
+        if (status === "denied") {
+          setCameraError(
+            "Camera access is blocked. Please enable camera in your browser settings.",
+          );
+        }
+      } catch (err) {
+        console.warn("Permission check failed:", err);
+      }
+    };
+    checkPermission();
   }, []);
 
-  // ==========================================================
-  // START CAMERA
-  // ==========================================================
-
+  // Camera setup - MOBILE OPTIMIZED
   const startCamera = useCallback(async () => {
     try {
       setIsLoading(true);
       setCameraError(null);
 
-      // Get camera stream.
+      // Check for secure context
+      if (!window.isSecureContext && window.location.protocol !== "https:") {
+        console.warn(
+          "⚠️ Not in secure context. Camera may not work on mobile.",
+        );
+      }
+
+      // Request camera with mobile-optimized constraints
       const stream = await requestCameraWithFallback(facingMode);
       streamRef.current = stream;
 
-      // Get video track for torch support.
       const track = getVideoTrack(stream);
       trackRef.current = track;
       setTorchAvailable(isTorchSupported(track));
 
-      // Attach stream to video element.
-      if (!videoRef.current) {
-        throw new Error("Video element is not available.");
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+        videoRef.current.setAttribute("playsinline", "true");
+        videoRef.current.setAttribute("webkit-playsinline", "true");
+
+        // Wait for video to be ready
+        await new Promise((resolve, reject) => {
+          const timeout = setTimeout(reject, 10000);
+          videoRef.current.onloadedmetadata = () => {
+            clearTimeout(timeout);
+            resolve();
+          };
+          videoRef.current.onerror = reject;
+        });
+
+        await videoRef.current.play();
+        console.log("📷 Camera started successfully");
+        console.log(
+          `📹 Video: ${videoRef.current.videoWidth}x${videoRef.current.videoHeight}`,
+        );
+        setIsLoading(false);
       }
-      videoRef.current.srcObject = stream;
-      await videoRef.current.play();
-      setIsLoading(false);
-    } catch (error) {
-      console.error("Camera error:", error);
-      setCameraError(getCameraErrorMessage(error));
+    } catch (err) {
+      console.error("Camera error:", err);
+      const userMessage = getCameraErrorMessage(err);
+      setCameraError(userMessage);
+      toast.error(userMessage);
       setIsLoading(false);
     }
   }, [facingMode]);
 
-  // ==========================================================
-  // CAMERA LIFECYCLE
-  // ==========================================================
-
+  // Start/stop camera
   useEffect(() => {
-    if (!cameraOn) {
+    if (cameraOn) {
+      const timer = setTimeout(() => {
+        startCamera();
+      }, 300);
+      return () => clearTimeout(timer);
+    } else {
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach((t) => t.stop());
+        streamRef.current = null;
+        trackRef.current = null;
+      }
+      if (animationRef.current) {
+        cancelAnimationFrame(animationRef.current);
+      }
+    }
+  }, [cameraOn, startCamera]);
+
+  // Main render loop
+  useEffect(() => {
+    if (
+      !cameraOn ||
+      cameraError ||
+      !streamRef.current ||
+      isLoading ||
+      !cvReady
+    ) {
       return;
     }
-    startCamera();
-    return () => {
-      stopCamera();
-    };
-  }, [cameraOn, startCamera, stopCamera]);
 
-  // ==========================================================
-  // PROCESS DETECTED CARD
-  // ==========================================================
-
-  const processCard = useCallback(
-    (cv, sourceImage, corners) => {
-      console.log("🎯 Card detected and stable!");
-
-      // ------------------------------------------------------
-      // STEP 1
-      // Straighten card.
-      // ------------------------------------------------------
-
-      const warpedCard = warpCard(
-        cv,
-        sourceImage,
-        corners,
-        CARD_CONFIG.cardWidth,
-        CARD_CONFIG.cardHeight,
-      );
-
-      if (!warpedCard) {
-        console.error("❌ Could not warp card");
-        processedRef.current = false;
-        return;
-      }
-
-      try {
-        // ----------------------------------------------------
-        // STEP 2
-        // Analyze known checkbox positions.
-        //
-        // IMPORTANT:
-        // We don't search the entire card anymore.
-        //
-        // The config already tells us where
-        // every checkbox is.
-        // ----------------------------------------------------
-
-        const analysis = analyzeCheckboxes(cv, warpedCard, CARD_CONFIG);
-        console.log("📊 Checkbox results:", analysis);
-
-        // ----------------------------------------------------
-        // STEP 3
-        // Convert warped card to an image.
-        // ----------------------------------------------------
-
-        const warpedCanvas = document.createElement("canvas");
-        warpedCanvas.width = CARD_CONFIG.cardWidth;
-        warpedCanvas.height = CARD_CONFIG.cardHeight;
-        cv.imshow(warpedCanvas, warpedCard);
-
-        // ----------------------------------------------------
-        // STEP 4
-        // Check whether at least one box
-        // was checked.
-        // ----------------------------------------------------
-
-        if (analysis.checkedCount === 0) {
-          toast.info("No checkbox detected. Please tick a box and try again.");
-          processedRef.current = false;
-          stableFramesRef.current = 0;
-          setCardDetected(false);
-          return;
-        }
-
-        // ----------------------------------------------------
-        // STEP 5
-        // Send result to parent component.
-        // ----------------------------------------------------
-
-        if (onCardScanned) {
-          onCardScanned(
-            analysis.checkedBoxes,
-            warpedCanvas.toDataURL("image/jpeg", 0.9),
-          );
-        }
-
-        // ----------------------------------------------------
-        // STEP 6
-        // Stop camera.
-        // ----------------------------------------------------
-
-        stopCamera();
-        setCameraOn(false);
-      } finally {
-        // Always free OpenCV memory.
-        warpedCard.delete();
-      }
-    },
-    [onCardScanned, stopCamera],
-  );
-
-  // ==========================================================
-  // MAIN CAMERA / DETECTION LOOP
-  // ==========================================================
-
-  useEffect(() => {
-    // Don't start detection until everything is ready.
-    if (!cameraOn || cameraError || isLoading || !cvReady) {
-      return;
-    }
     const video = videoRef.current;
     const canvas = canvasRef.current;
-    if (!video || !canvas) {
-      return;
-    }
-    const context = canvas.getContext("2d", {
+    const displayCanvas = displayCanvasRef.current;
+
+    if (!video || !canvas || !displayCanvas) return;
+
+    const ctx = canvas.getContext("2d", { willReadFrequently: true });
+    const displayCtx = displayCanvas.getContext("2d", {
       willReadFrequently: true,
     });
 
-    // --------------------------------------------------------
-    // Process one camera frame.
-    // --------------------------------------------------------
-
-    const processFrame = (timestamp) => {
-      if (!cameraOn) {
+    const renderFrame = () => {
+      if (!cameraOn || !video) {
+        animationRef.current = requestAnimationFrame(renderFrame);
         return;
       }
 
       try {
-        // Camera is not ready yet.
         if (video.readyState < 2) {
-          animationRef.current = requestAnimationFrame(processFrame);
+          animationRef.current = requestAnimationFrame(renderFrame);
           return;
         }
-        const width = video.videoWidth || 640;
-        const height = video.videoHeight || 480;
-        // Resize canvas if camera resolution changed.
-        if (canvas.width !== width || canvas.height !== height) {
-          canvas.width = width;
-          canvas.height = height;
+
+        const vw = video.videoWidth || 640;
+        const vh = video.videoHeight || 480;
+
+        if (canvas.width !== vw || canvas.height !== vh) {
+          canvas.width = vw;
+          canvas.height = vh;
         }
 
-        // ----------------------------------------------------
-        // Draw camera image on canvas.
-        // ----------------------------------------------------
+        if (displayCanvas.width !== vw || displayCanvas.height !== vh) {
+          displayCanvas.width = vw;
+          displayCanvas.height = vh;
+        }
 
-        context.drawImage(video, 0, 0, width, height);
-        // ----------------------------------------------------
-        // Don't run ORB on every animation frame.
-        //
-        // Camera might run at 60 FPS.
-        // ORB doesn't need to run 60 times/sec.
-        // ----------------------------------------------------
+        // Draw video to display canvas
+        if (facingMode === "user") {
+          displayCtx.save();
+          displayCtx.scale(-1, 1);
+          displayCtx.drawImage(video, -vw, 0, vw, vh);
+          displayCtx.restore();
+        } else {
+          displayCtx.drawImage(video, 0, 0, vw, vh);
+        }
+
+        // Copy to processing canvas
+        ctx.drawImage(displayCanvas, 0, 0);
+
+        // Process every FRAME_INTERVAL ms
         const now = Date.now();
-        const enoughTimePassed =
-          now - lastDetectionRef.current >= DETECTION_INTERVAL;
-        if (enoughTimePassed && !processedRef.current) {
-          lastDetectionRef.current = now;
-          detectCard(context, canvas);
+        if (
+          now - lastDetection.current >= FRAME_INTERVAL &&
+          cvReady &&
+          !processed.current
+        ) {
+          lastDetection.current = now;
+          detectCard(ctx, canvas);
         }
 
-        // Continue loop.
-        animationRef.current = requestAnimationFrame(processFrame);
-      } catch (error) {
-        console.error("Camera frame error:", error);
-        animationRef.current = requestAnimationFrame(processFrame);
+        // Draw overlay
+        drawOverlay(displayCtx, vw, vh);
+
+        animationRef.current = requestAnimationFrame(renderFrame);
+      } catch (err) {
+        console.error("Render error:", err);
+        animationRef.current = requestAnimationFrame(renderFrame);
       }
     };
 
-    // --------------------------------------------------------
-    // CARD DETECTION
-    // --------------------------------------------------------
-
-    const detectCard = (context, canvas) => {
-      const cv = window.cv;
-      let sourceImage = null;
+    // Detection function
+    const detectCard = (ctx, canvas) => {
       try {
-        // Convert canvas → OpenCV Mat.
-        sourceImage = cv.imread(canvas);
+        const cv = window.cv;
+        const src = cv.imread(canvas);
 
-        // ----------------------------------------------
-        // Find our card using ORB.
-        // ----------------------------------------------
+        const result = findCard(cv, src);
 
-        const result = findCard(cv, sourceImage);
+        if (result && result.found && result.matches >= MIN_MATCHES) {
+          setMatches(result.matches);
+          setCardFound(true);
 
-        // ----------------------------------------------
-        // Card not found.
-        // ----------------------------------------------
+          drawCardBounds(cv, src, result.corners);
+          cv.imshow(displayCanvasRef.current, src);
 
-        if (!result || !result.found || result.matches < MIN_MATCHES) {
-          setMatches(0);
+          stableFrames.current += 1;
+          setCardDetected(stableFrames.current >= STABLE_FRAMES_REQUIRED);
+
+          if (
+            stableFrames.current >= STABLE_FRAMES_REQUIRED &&
+            !processed.current
+          ) {
+            processed.current = true;
+            console.log("🎯 Card detected! Processing...");
+            processCard(cv, canvas, result);
+          }
+        } else {
+          setMatches(result?.matches || 0);
           setCardFound(false);
           setCardDetected(false);
-          stableFramesRef.current = 0;
-          return;
+          stableFrames.current = 0;
         }
 
-        // ----------------------------------------------
-        // Card found.
-        // ----------------------------------------------
-
-        setMatches(result.matches);
-        setCardFound(true);
-        // ----------------------------------------------
-        // Draw detected card border.
-        // ----------------------------------------------
-
-        drawCardBounds(cv, sourceImage, result.corners);
-        cv.imshow(canvas, sourceImage);
-
-        // ----------------------------------------------
-        // Card detected in another frame.
-        // ----------------------------------------------
-
-        stableFramesRef.current += 1;
-        const isStable = stableFramesRef.current >= REQUIRED_STABLE_FRAMES;
-        setCardDetected(isStable);
-
-        // ----------------------------------------------
-        // Wait until card is stable.
-        // ----------------------------------------------
-
-        if (!isStable) {
-          return;
-        }
-
-        // ----------------------------------------------
-        // Prevent duplicate processing.
-        // ----------------------------------------------
-
-        processedRef.current = true;
-        processCard(cv, sourceImage, result.corners);
-      } catch (error) {
-        console.error("Card detection error:", error);
-      } finally {
-        // IMPORTANT:
-        // Every cv.imread() must eventually
-        // have a matching .delete().
-        if (sourceImage) {
-          sourceImage.delete();
-        }
+        src.delete();
+      } catch (err) {
+        console.error("Detection error:", err);
       }
     };
 
-    // Start loop.
-    animationRef.current = requestAnimationFrame(processFrame);
+    // Process card after detection
+    const processCard = (cv, canvas, result) => {
+      try {
+        const srcMat = cv.imread(canvas);
 
-    // Cleanup.
+        const warped = warpCard(
+          cv,
+          srcMat,
+          result.corners,
+          CARD_CONFIG.cardWidth,
+          CARD_CONFIG.cardHeight,
+        );
+
+        if (warped && !warped.empty()) {
+          const globalThreshold = computeGlobalThreshold(
+            cv,
+            warped,
+            CARD_CONFIG.checkboxes,
+          );
+
+          const analysis = analyzeCheckboxes(
+            cv,
+            warped,
+            CARD_CONFIG,
+            globalThreshold,
+          );
+
+          console.log("📊 Detection results:", analysis);
+
+          const warpedCanvas = document.createElement("canvas");
+          warpedCanvas.width = CARD_CONFIG.cardWidth;
+          warpedCanvas.height = CARD_CONFIG.cardHeight;
+          cv.imshow(warpedCanvas, warped);
+
+          if (analysis.checkedCount > 0) {
+            if (onCardScanned) {
+              onCardScanned(analysis.checkedBoxes, warpedCanvas.toDataURL());
+            }
+
+            if (streamRef.current) {
+              streamRef.current.getTracks().forEach((t) => t.stop());
+              streamRef.current = null;
+            }
+            setCameraOn(false);
+            toast.success(`Found ${analysis.checkedCount} option(s)`);
+          } else {
+            toast.info("No checkboxes detected. Try again.");
+            processed.current = false;
+            stableFrames.current = 0;
+            setCardDetected(false);
+          }
+
+          warpedCanvas.remove();
+          warped.delete();
+        } else {
+          console.error("❌ Failed to warp card");
+          processed.current = false;
+        }
+
+        srcMat.delete();
+      } catch (err) {
+        console.error("❌ Card processing error:", err);
+        processed.current = false;
+      }
+    };
+
+    // Draw overlay
+    const drawOverlay = (ctx, width, height) => {
+      const boxWidth = Math.min(width * 0.8, 400);
+      const boxHeight = boxWidth * 1.4;
+      const x = (width - boxWidth) / 2;
+      const y = (height - boxHeight) / 2;
+
+      ctx.strokeStyle = cardDetected
+        ? "#22c55e"
+        : cardFound
+          ? "#facc15"
+          : "rgba(255,255,255,0.3)";
+      ctx.lineWidth = 3;
+      ctx.setLineDash([10, 10]);
+      ctx.strokeRect(x, y, boxWidth, boxHeight);
+      ctx.setLineDash([]);
+
+      const cornerSize = 30;
+      ctx.strokeStyle = cardDetected ? "#22c55e" : "#ffffff80";
+      ctx.lineWidth = 4;
+
+      // Top-left
+      ctx.beginPath();
+      ctx.moveTo(x, y + cornerSize);
+      ctx.lineTo(x, y);
+      ctx.lineTo(x + cornerSize, y);
+      ctx.stroke();
+
+      // Top-right
+      ctx.beginPath();
+      ctx.moveTo(x + boxWidth - cornerSize, y);
+      ctx.lineTo(x + boxWidth, y);
+      ctx.lineTo(x + boxWidth, y + cornerSize);
+      ctx.stroke();
+
+      // Bottom-left
+      ctx.beginPath();
+      ctx.moveTo(x, y + boxHeight - cornerSize);
+      ctx.lineTo(x, y + boxHeight);
+      ctx.lineTo(x + cornerSize, y + boxHeight);
+      ctx.stroke();
+
+      // Bottom-right
+      ctx.beginPath();
+      ctx.moveTo(x + boxWidth - cornerSize, y + boxHeight);
+      ctx.lineTo(x + boxWidth, y + boxHeight);
+      ctx.lineTo(x + boxWidth, y + boxHeight - cornerSize);
+      ctx.stroke();
+    };
+
+    animationRef.current = requestAnimationFrame(renderFrame);
+
     return () => {
       if (animationRef.current) {
         cancelAnimationFrame(animationRef.current);
-        animationRef.current = null;
       }
     };
-  }, [cameraOn, cameraError, isLoading, cvReady, processCard]);
-
-  // ==========================================================
-  // TORCH
-  // ==========================================================
-
-  const toggleTorch = () => {
-    if (!trackRef.current) {
-      return;
-    }
-
-    const nextState = !torchOn;
-    setTorch(trackRef.current, nextState);
-    setTorchOn(nextState);
-  };
-
-  // ==========================================================
-  // RETRY CAMERA
-  // ==========================================================
-
-  const retryCamera = () => {
-    setCameraError(null);
-    setCameraOn(true);
-    startCamera();
-  };
-
-  // ==========================================================
-  // UI
-  // ==========================================================
+  }, [cameraOn, cameraError, cvReady, isLoading, facingMode, onCardScanned]);
 
   return (
     <div className="fixed inset-0 bg-black overflow-hidden">
-      {/* =====================================================
-          REAL VIDEO ELEMENT
-
-          Hidden because we draw the video onto canvas.
-      ====================================================== */}
-
-      <video ref={videoRef} playsInline autoPlay muted className="hidden" />
-
-      {/* =====================================================
-          CAMERA CANVAS
-      ====================================================== */}
-
-      <canvas
-        ref={canvasRef}
-        className="absolute inset-0 w-full h-full object-contain"
+      <video
+        ref={videoRef}
+        playsInline
+        autoPlay
+        muted
+        className="hidden"
+        style={{ display: "none" }}
       />
 
-      {/* =====================================================
-          LOADING
-      ====================================================== */}
+      <canvas ref={canvasRef} style={{ display: "none" }} />
 
-      {(isLoading || !cvReady) && (
-        <div className="absolute inset-0 z-30 flex items-center justify-center bg-black">
-          <div className="text-center text-white">
-            <div className="mx-auto mb-4 h-12 w-12 animate-spin rounded-full border-b-2 border-white" />
+      <canvas
+        ref={displayCanvasRef}
+        className="absolute inset-0 w-full h-full object-contain"
+        style={{ backgroundColor: "#000" }}
+      />
+
+      {isLoading || !cvReady ? (
+        <div className="absolute inset-0 flex items-center justify-center bg-black z-10">
+          <div className="text-white text-center">
+            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-white mx-auto mb-4" />
             <p className="text-lg font-semibold">
-              {!cvReady ? "Loading scanner..." : "Starting camera..."}
+              {!cvReady ? "Loading OpenCV..." : "Starting camera..."}
             </p>
           </div>
         </div>
-      )}
+      ) : cameraError ? (
+        <div className="absolute inset-0 flex flex-col items-center justify-center bg-black z-10 p-6">
+          <div className="text-center max-w-sm w-full">
+            <div className="w-16 h-16 rounded-full bg-red-500/20 flex items-center justify-center mx-auto mb-4">
+              <CameraOffIcon className="w-8 h-8 text-red-500" />
+            </div>
+            <p className="text-red-500 text-lg font-semibold">Camera Error</p>
+            <p className="text-red-400 text-sm mt-2">{cameraError}</p>
 
-      {/* =====================================================
-          CAMERA ERROR
-      ====================================================== */}
+            {permissionStatus === "denied" && (
+              <div className="mt-4 p-4 bg-yellow-500/20 rounded-lg">
+                <p className="text-yellow-400 text-sm">
+                  To enable camera access on mobile:
+                  <br />
+                  1. Tap the 🔒 icon in the address bar
+                  <br />
+                  2. Allow camera permissions
+                  <br />
+                  3. Refresh the page
+                </p>
+              </div>
+            )}
 
-      {!isLoading && cvReady && cameraError && (
-        <div className="absolute inset-0 z-30 flex flex-col items-center justify-center bg-black px-6 text-center">
-          <p className="text-lg font-semibold text-red-500">{cameraError}</p>
-          <button
-            onClick={retryCamera}
-            className="mt-4 rounded-full bg-white px-6 py-2 text-black"
-          >
-            Retry
-          </button>
+            <button
+              onClick={() => {
+                setCameraError(null);
+                startCamera();
+              }}
+              className="mt-4 px-6 py-2 bg-white text-black rounded-full font-medium"
+            >
+              Retry
+            </button>
+          </div>
         </div>
-      )}
-
-      {/* =====================================================
-          SCANNER UI
-      ====================================================== */}
-
-      {!isLoading && cvReady && !cameraError && (
+      ) : (
         <>
-          {/* Dark overlay */}
-          <div className="pointer-events-none absolute inset-0 z-10 bg-gradient-to-b from-black/60 via-transparent to-black/70" />
+          <div className="absolute inset-0 bg-gradient-to-b from-black/60 via-transparent to-black/70 pointer-events-none z-10" />
 
-          {/* =================================================
-                TOP BAR
-            ================================================= */}
-
-          <div className="absolute left-0 right-0 top-0 z-20 flex items-center justify-between px-4 pt-4">
-            <h1 className="text-lg font-semibold text-white">Scan Your Card</h1>
-
+          <div className="absolute top-0 left-0 right-0 flex items-center justify-between px-4 pt-4 z-20">
+            <h1 className="text-white text-lg font-semibold tracking-wide">
+              Scan Your Card
+            </h1>
             <div className="flex gap-2">
-              {/* Torch */}
-              {torchAvailable && (
-                <button
-                  onClick={toggleTorch}
-                  className={`flex h-11 w-11 items-center justify-center rounded-full backdrop-blur-md ${
-                    torchOn
-                      ? "bg-yellow-400 text-black"
-                      : "bg-white/15 text-white"
-                  }`}
-                >
-                  {torchOn ? (
-                    <span className="text-xl">⚡</span>
-                  ) : (
-                    <span className="text-xl">🔦</span>
-                  )}
-                </button>
-              )}
-
-              {/* Stop camera */}
               <button
-                onClick={() => {
-                  stopCamera();
-                  setCameraOn(false);
-                }}
-                className="flex h-11 w-11 items-center justify-center rounded-full bg-white/15 text-white backdrop-blur-md"
+                onClick={() => setCameraOn(false)}
+                className="w-11 h-11 rounded-full flex items-center justify-center bg-white/15 text-white backdrop-blur-md"
               >
-                <CameraOffIcon className="h-5 w-5" />
+                <CameraOffIcon className="w-5 h-5" />
               </button>
             </div>
           </div>
 
-          {/* =================================================
-                CARD GUIDE
-            ================================================= */}
-
-          <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center px-10">
+          <div className="absolute inset-0 flex items-center justify-center pointer-events-none px-10 z-10">
             <motion.div
               animate={{
                 borderColor: cardDetected
@@ -639,48 +588,34 @@ const CardScanner = ({ onCardScanned }) => {
                   : cardFound
                     ? "#facc15"
                     : "#ffffff80",
-
                 scale: cardDetected ? 1.02 : cardFound ? 1.01 : 1,
               }}
-              transition={{
-                duration: 0.25,
-              }}
-              className="aspect-[3/5] w-full max-w-[340px] rounded-2xl border-[3px] border-dashed"
+              transition={{ duration: 0.25 }}
+              className="w-full max-w-[340px] aspect-[3/5] rounded-2xl border-[3px] border-dashed"
             />
           </div>
 
-          {/* =================================================
-                STATUS
-            ================================================= */}
-
-          <div className="absolute bottom-10 left-0 right-0 z-20 flex justify-center px-6">
+          <div className="absolute bottom-10 left-0 right-0 flex flex-col items-center gap-2 px-6 z-20">
             <motion.div
               key={matches}
-              initial={{
-                scale: 0.9,
-                opacity: 0.7,
-              }}
-              animate={{
-                scale: 1,
-                opacity: 1,
-              }}
-              className="flex items-center gap-2 rounded-full bg-black/60 px-4 py-2 text-sm text-white backdrop-blur-md"
+              initial={{ scale: 0.9, opacity: 0.7 }}
+              animate={{ scale: 1, opacity: 1 }}
+              className="bg-black/60 backdrop-blur-md text-white px-4 py-2 rounded-full text-sm flex items-center gap-2"
             >
               <span
-                className={`h-2 w-2 rounded-full ${
+                className={`w-2 h-2 rounded-full ${
                   cardDetected
                     ? "bg-green-400"
                     : cardFound
-                      ? "animate-pulse bg-yellow-400"
-                      : "animate-pulse bg-red-400"
+                      ? "bg-yellow-400 animate-pulse"
+                      : "bg-red-400 animate-pulse"
                 }`}
               />
-
               {cardDetected
                 ? "✅ Card detected! Hold steady..."
                 : cardFound
                   ? `Hold steady... (${matches} matches)`
-                  : "Position card in frame"}
+                  : `Position card in frame (${matches} matches)`}
             </motion.div>
           </div>
         </>

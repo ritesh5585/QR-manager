@@ -1,33 +1,50 @@
+// src/pages/DocumentScanner.jsx
+
 import React, { useState } from "react";
-import { useParams } from "react-router-dom";
-import MarkerDetectionVisualizer from "../components/MarkerDetectionVisualizer";
-import SquareDetector from "../components/SquareDetector";
+import { useParams, useNavigate } from "react-router-dom";
+import CardScanner from "../components/CardScanner";
+import { toast } from "react-hot-toast";
+import { assignQR } from "../service/api.service";
 
 const DocumentScanner = () => {
   const { qrId } = useParams();
-  const [capturedImage, setCapturedImage] = useState(null);
+  const navigate = useNavigate();
+  const [isProcessing, setIsProcessing] = useState(false);
 
-  const handleImageCaptured = (imageDataUrl) => {
-    console.log("📸 Image captured!");
-    setCapturedImage(imageDataUrl);
+  const handleCardScanned = async (checkedBoxes, warpedImage) => {
+    setIsProcessing(true);
+    console.log("📊 Card scanned:", checkedBoxes);
+
+    try {
+      if (qrId && checkedBoxes.length > 0) {
+        const payload = checkedBoxes.map((box) => ({
+          number: box.number,
+          title: box.title,
+          fileType: box.fileType,
+          fillPercentage: box.fillPercentage,
+        }));
+
+        await assignQR(qrId, payload);
+
+        toast.success(`✅ Found ${checkedBoxes.length} option(s)`);
+        navigate(`/result/${qrId}`);
+      } else {
+        toast.error("No options selected");
+        // Show modal or go back
+        navigate(-1);
+      }
+    } catch (error) {
+      console.error("❌ Error saving results:", error);
+      toast.error("Failed to save results: " + error.message);
+    } finally {
+      setIsProcessing(false);
+    }
   };
 
-  if (capturedImage) {
-    return (
-      <div className="min-h-screen bg-[#f3e8d4] relative">
-        <SquareDetector qrId={qrId} scannedImage={capturedImage} />
-        <button
-          onClick={() => setCapturedImage(null)}
-          className="fixed bottom-4 left-4 px-4 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 transition shadow-lg z-50"
-        >
-          ← Scan Again
-        </button>
-      </div>
-    );
-  }
-
   return (
-    <MarkerDetectionVisualizer onFourMarkersDetected={handleImageCaptured} />
+    <div className="min-h-screen bg-[#f3e8d4]">
+      <CardScanner onCardScanned={handleCardScanned} qrId={qrId} />
+    </div>
   );
 };
 

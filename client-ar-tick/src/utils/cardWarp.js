@@ -108,8 +108,8 @@ export function warpCard(cv, cameraImage, corners, cardWidth, cardHeight) {
 // ============================================================
 
 function orderCorners(corners) {
-  if (!corners || corners.length !== 3) {
-    throw new Error("Exactly 3 card corners are required.");
+  if (!corners || corners.length !== 4) {
+    throw new Error("Exactly 4 card corners are required.");
   }
 
   // Find the center of the four corners.

@@ -3,14 +3,11 @@ export const CARD_CONFIG = {
   name: "Eating Style Card",
   version: "1.0.0",
 
-  // Reference image path
   referenceImage: "/cards/eatingStyle/reference.jpg",
 
-  // Standard card dimensions (after warp)
-  cardWidth: 1000,
-  cardHeight: 1500,
+  cardWidth: 600,
+  cardHeight: 1000,
 
-  // Checkbox regions in normalized coordinates (0-1 range)
   checkboxes: [
     {
       number: 1,
@@ -18,10 +15,10 @@ export const CARD_CONFIG = {
       fileType: "mp4",
       displayName: "I Eat While Distracted",
       roi: {
-        x: 0.12, // 12% from left
-        y: 0.44, // 44% from top
-        width: 0.08, // 8% of card width
-        height: 0.06, // 6% of card height
+        x: 0.12,
+        y: 0.44,
+        width: 0.08,
+        height: 0.06,
       },
     },
     {
@@ -50,11 +47,10 @@ export const CARD_CONFIG = {
     },
   ],
 
-  // Detection thresholds
   detection: {
     minFillPercentage: 8,
     margin: 15,
     confidenceThreshold: 40,
-    minMatches: 30, // Minimum ORB matches for card recognition
+    minMatches: 25,
   },
 };

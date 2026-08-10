@@ -1,5 +1,5 @@
-// utils/cameraHelper.js
-// Camera helper with multiple fallback strategies and flip support
+// src/utils/cameraHelper.js
+// Camera helper with mobile-optimized constraints
 
 export const isSecureContext = () => {
   return (
@@ -11,41 +11,54 @@ export const isSecureContext = () => {
 };
 
 export const getCameraConstraints = (facingMode = "environment") => {
-  // Try different constraint combinations for maximum compatibility
+  // Mobile-optimized constraints - use simpler settings for better compatibility
   const constraints = [
-    // Strategy 1: Try with facing mode
+    // Strategy 1: Mobile-first with ideal constraints
     {
       video: {
         facingMode: facingMode,
-        width: { ideal: 640 },
-        height: { ideal: 480 },
+        width: { ideal: 640, max: 1280 },
+        height: { ideal: 480, max: 720 },
+        frameRate: { ideal: 30, max: 60 }
       },
+      audio: false
     },
-    // Strategy 2: Try without facing mode (laptops)
+    // Strategy 2: Without facing mode (for laptops/desktops)
     {
       video: {
         width: { ideal: 640 },
-        height: { ideal: 480 },
+        height: { ideal: 480 }
       },
+      audio: false
     },
-    // Strategy 3: Try with opposite facing mode
+    // Strategy 3: Minimum constraints (most compatible)
     {
       video: {
-        facingMode: facingMode === "environment" ? "user" : "environment",
-        width: { ideal: 640 },
-        height: { ideal: 480 },
+        facingMode: facingMode
       },
+      audio: false
     },
-    // Strategy 4: Minimum constraints
+    // Strategy 4: Fallback - just video
     {
       video: true,
-    },
+      audio: false
+    }
   ];
 
   return constraints;
 };
 
 export const requestCameraWithFallback = async (facingMode = "environment") => {
+  // Check if we're in a secure context
+  if (!isSecureContext()) {
+    console.warn("⚠️ Not in secure context. Camera may not work.");
+  }
+
+  // Check if mediaDevices is available
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    throw new Error("Camera not supported on this device/browser.");
+  }
+
   const constraintsList = getCameraConstraints(facingMode);
   let lastError = null;
 
@@ -56,16 +69,27 @@ export const requestCameraWithFallback = async (facingMode = "environment") => {
         constraintsList[i],
       );
       console.log(`✅ Camera strategy ${i + 1} succeeded`);
+      
+      // Check if we got video tracks
+      const videoTracks = stream.getVideoTracks();
+      if (videoTracks.length === 0) {
+        throw new Error("No video tracks available");
+      }
+      
+      console.log(`📹 Using camera: ${videoTracks[0].label || 'Unknown'}`);
       return stream;
     } catch (error) {
       console.warn(`❌ Camera strategy ${i + 1} failed:`, error.message);
       lastError = error;
 
-      // If this is a permission error, continue to try other strategies
-      if (
-        error.name === "NotAllowedError" ||
-        error.name === "PermissionDeniedError"
-      ) {
+      // If this is a permission error, don't continue
+      if (error.name === "NotAllowedError" || error.name === "PermissionDeniedError") {
+        // Try one more time with different constraints
+        continue;
+      }
+      
+      // For other errors, try next strategy
+      if (error.name === "NotFoundError" || error.name === "DevicesNotFoundError") {
         continue;
       }
     }
@@ -111,10 +135,11 @@ export const getCameraErrorMessage = (error) => {
 
   const errorMap = {
     NotAllowedError:
-      "Camera access was denied. Please allow camera access in your browser settings.",
+      "Camera access denied. Please allow camera access in your browser settings.",
     PermissionDeniedError:
-      "Camera access was denied. Please allow camera access in your browser settings.",
+      "Camera access denied. Please allow camera access in your browser settings.",
     NotFoundError: "No camera found on this device. Please connect a camera.",
+    DevicesNotFoundError: "No camera found on this device. Please connect a camera.",
     NotReadableError:
       "Camera is in use by another application. Please close other apps using the camera.",
     OverconstrainedError:
@@ -131,4 +156,19 @@ export const getCameraErrorMessage = (error) => {
   );
 
   return errorMap[key] || `Camera error: ${error.message || error}`;
+};
+
+// Get camera permission status
+export const getCameraPermissionStatus = async () => {
+  try {
+    if (!navigator.permissions || !navigator.permissions.query) {
+      return 'unknown';
+    }
+    
+    const result = await navigator.permissions.query({ name: 'camera' });
+    return result.state; // 'granted', 'denied', 'prompt'
+  } catch (error) {
+    console.warn('Permission query not supported:', error);
+    return 'unknown';
+  }
 };

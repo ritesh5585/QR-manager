@@ -1,346 +1,260 @@
-// cardMatcher.js
-//
-// This file does one job:
-//
-// 1. Load our reference card.
-// 2. Remember the important features of that card.
-// 3. Compare camera frames with the reference card.
-// 4. If the card is found, return its 4 corners.
-//
-// ORB = finds interesting points in the image.
-// Homography = tells us where the reference card is
-// inside the camera image.
 
+let referenceMat = null;
 let referenceKeypoints = null;
 let referenceDescriptors = null;
-let referenceWidth = 0;
-let referenceHeight = 0;
 
-// --------------------------------------------------
-// 1. LOAD THE REFERENCE CARD
-// --------------------------------------------------
-
-export async function loadReferenceCard(cv, imageUrl) {
+/**
+ * Load reference image
+ */
+export const loadReferenceCard = async (cv, imageUrl) => {
   try {
-    console.log("Loading reference card:", imageUrl);
+    console.log("📸 Loading reference card:", imageUrl);
 
-    // Create a normal browser image.
-    const image = new Image();
+    const img = new Image();
+    img.crossOrigin = "anonymous";
+    img.src = imageUrl;
 
-    // Needed when image is coming from another domain.
-    image.crossOrigin = "anonymous";
-
-    // Tell browser which image to load.
-    image.src = imageUrl;
-
-    // Wait until image is actually loaded.
     await new Promise((resolve, reject) => {
-      image.onload = resolve;
-      image.onerror = reject;
+      img.onload = resolve;
+      img.onerror = reject;
     });
 
-    console.log("Reference image loaded.");
+    const src = cv.imread(img);
 
-    // Convert browser image into OpenCV Mat.
-    const imageMat = cv.imread(image);
+    if (src.empty()) {
+      console.error("Failed to load reference image");
+      return false;
+    }
 
-    // Remember original card size.
-    referenceWidth = imageMat.cols;
-    referenceHeight = imageMat.rows;
-
-    // ORB works better with grayscale images.
+    // Convert to grayscale
     const gray = new cv.Mat();
+    cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
 
-    cv.cvtColor(imageMat, gray, cv.COLOR_RGBA2GRAY);
-
-    // Create ORB detector.
+    // Detect ORB features
     const orb = new cv.ORB();
-
-    // These will contain the important points
-    // and their descriptions.
     const keypoints = new cv.KeyPointVector();
     const descriptors = new cv.Mat();
 
-    // Find features in our reference card.
     orb.detectAndCompute(gray, new cv.Mat(), keypoints, descriptors, false);
 
-    // Save them.
+    // Store reference data
+    referenceMat = gray.clone();
     referenceKeypoints = keypoints;
-    referenceDescriptors = descriptors;
+    referenceDescriptors = descriptors.clone();
 
-    console.log(`Reference card ready. Found ${keypoints.size()} features.`);
-
-    // We don't need these anymore.
+    // Cleanup
+    src.delete();
     gray.delete();
-    imageMat.delete();
     orb.delete();
+
+    console.log(`✅ Loaded reference card with ${keypoints.size()} features`);
 
     return true;
   } catch (error) {
-    console.error("Could not load reference card:", error);
-
+    console.error(" Failed to load reference card:", error);
     return false;
   }
-}
+};
 
-// --------------------------------------------------
-// 2. FIND CARD INSIDE CAMERA IMAGE
-// --------------------------------------------------
-
-export function findCard(cv, cameraMat) {
-  // We cannot search if reference card
-  // hasn't been loaded yet.
+/**
+ * Find card in camera frame
+ */
+export const findCard = (cv, cameraMat) => {
   if (!referenceKeypoints || !referenceDescriptors) {
-    console.log("Reference card is not loaded.");
-
+    console.error(" Reference card not loaded");
     return null;
   }
 
-  // Convert camera image to grayscale.
-  const gray = new cv.Mat();
+  try {
+    // Convert camera frame to grayscale
+    const gray = new cv.Mat();
+    cv.cvtColor(cameraMat, gray, cv.COLOR_RGBA2GRAY);
 
-  cv.cvtColor(cameraMat, gray, cv.COLOR_RGBA2GRAY);
+    // Detect ORB features in camera frame
+    const orb = new cv.ORB();
+    const keypoints = new cv.KeyPointVector();
+    const descriptors = new cv.Mat();
 
-  // Create ORB.
-  const orb = new cv.ORB();
+    orb.detectAndCompute(gray, new cv.Mat(), keypoints, descriptors, false);
 
-  // These will contain features from
-  // the current camera frame.
-  const cameraKeypoints = new cv.KeyPointVector();
+    if (keypoints.size() < 10) {
+      gray.delete();
+      orb.delete();
+      keypoints.delete();
+      descriptors.delete();
+      return null;
+    }
 
-  const cameraDescriptors = new cv.Mat();
+    // Match features
+    const matcher = new cv.BFMatcher(cv.NORM_HAMMING, true);
+    const matches = new cv.DMatchVector();
+    matcher.match(referenceDescriptors, descriptors, matches);
 
-  // Find features in camera frame.
-  orb.detectAndCompute(
-    gray,
-    new cv.Mat(),
-    cameraKeypoints,
-    cameraDescriptors,
-    false,
-  );
+    // Filter good matches
+    const matchesArray = [];
+    for (let i = 0; i < matches.size(); i++) {
+      matchesArray.push(matches.get(i));
+    }
 
-  // If camera image doesn't contain
-  // enough useful details, stop here.
-  if (cameraKeypoints.size() < 10) {
-    console.log("Not enough features in camera frame.");
+    matchesArray.sort((a, b) => a.distance - b.distance);
 
+    const numGoodMatches = Math.min(Math.floor(matchesArray.length * 0.5), 100);
+    const goodMatches = matchesArray.slice(0, numGoodMatches);
+
+    // Need at least 15 good matches
+    if (goodMatches.length < 15) {
+      gray.delete();
+      orb.delete();
+      keypoints.delete();
+      descriptors.delete();
+      matcher.delete();
+      matches.delete();
+      return null;
+    }
+
+    // Extract points for homography
+    const srcPoints = [];
+    const dstPoints = [];
+
+    for (const match of goodMatches) {
+      const refPt = referenceKeypoints.get(match.queryIdx).pt;
+      const camPt = keypoints.get(match.trainIdx).pt;
+      srcPoints.push(refPt.x, refPt.y);
+      dstPoints.push(camPt.x, camPt.y);
+    }
+
+    const srcMat = cv.matFromArray(
+      goodMatches.length,
+      1,
+      cv.CV_32FC2,
+      srcPoints,
+    );
+    const dstMat = cv.matFromArray(
+      goodMatches.length,
+      1,
+      cv.CV_32FC2,
+      dstPoints,
+    );
+
+    // Find homography
+    const inliers = new cv.Mat();
+    const H = cv.findHomography(
+      srcMat,
+      dstMat,
+      cv.RANSAC,
+      3.0,
+      inliers,
+      2000,
+      0.995,
+    );
+
+    if (H.empty()) {
+      gray.delete();
+      orb.delete();
+      keypoints.delete();
+      descriptors.delete();
+      matcher.delete();
+      matches.delete();
+      srcMat.delete();
+      dstMat.delete();
+      inliers.delete();
+      return null;
+    }
+
+    // Get card corners
+    const referenceCorners = cv.matFromArray(4, 1, cv.CV_32FC2, [
+      0,
+      0,
+      referenceMat.cols,
+      0,
+      referenceMat.cols,
+      referenceMat.rows,
+      0,
+      referenceMat.rows,
+    ]);
+
+    const cameraCorners = new cv.Mat();
+    cv.perspectiveTransform(referenceCorners, cameraCorners, H);
+
+    // Extract corner points
+    const corners = [];
+    for (let i = 0; i < 4; i++) {
+      const data = cameraCorners.data32F;
+      corners.push({
+        x: data[i * 2],
+        y: data[i * 2 + 1],
+      });
+    }
+
+    // Calculate area
+    const area =
+      Math.abs(
+        corners[0].x * corners[1].y -
+          corners[1].x * corners[0].y +
+          (corners[1].x * corners[2].y - corners[2].x * corners[1].y) +
+          (corners[2].x * corners[3].y - corners[3].x * corners[2].y) +
+          (corners[3].x * corners[0].y - corners[0].x * corners[3].y),
+      ) / 2;
+
+    const frameArea = cameraMat.rows * cameraMat.cols;
+
+    // Card should be at least 5% of frame
+    if (area < frameArea * 0.05) {
+      H.delete();
+      gray.delete();
+      orb.delete();
+      keypoints.delete();
+      descriptors.delete();
+      matcher.delete();
+      matches.delete();
+      srcMat.delete();
+      dstMat.delete();
+      inliers.delete();
+      referenceCorners.delete();
+      cameraCorners.delete();
+      return null;
+    }
+
+    // Cleanup
     gray.delete();
     orb.delete();
-    cameraKeypoints.delete();
-    cameraDescriptors.delete();
-
-    return null;
-  }
-
-  // ------------------------------------------------
-  // MATCH REFERENCE CARD WITH CAMERA FRAME
-  // ------------------------------------------------
-
-  const matcher = new cv.BFMatcher(cv.NORM_HAMMING, true);
-
-  const matches = new cv.DMatchVector();
-
-  matcher.match(referenceDescriptors, cameraDescriptors, matches);
-
-  // Convert matches into normal JavaScript array.
-  const matchList = [];
-
-  for (let i = 0; i < matches.size(); i++) {
-    matchList.push(matches.get(i));
-  }
-
-  // Smaller distance = better match.
-  matchList.sort((a, b) => a.distance - b.distance);
-
-  // Take the best matches.
-  const numberOfGoodMatches = Math.min(Math.floor(matchList.length * 0.5), 100);
-
-  const goodMatches = matchList.slice(0, numberOfGoodMatches);
-
-  console.log(`Good matches: ${goodMatches.length}`);
-
-  // We need enough matches before
-  // calculating the card position.
-  if (goodMatches.length < 15) {
-    console.log("Card not recognized.");
-
-    gray.delete();
-    orb.delete();
-    cameraKeypoints.delete();
-    cameraDescriptors.delete();
+    keypoints.delete();
+    descriptors.delete();
     matcher.delete();
     matches.delete();
-
-    return null;
-  }
-
-  // ------------------------------------------------
-  // GET MATCHING POINTS
-  // ------------------------------------------------
-
-  const referencePoints = [];
-  const cameraPoints = [];
-
-  for (const match of goodMatches) {
-    // Point from reference card.
-    const referencePoint = referenceKeypoints.get(match.queryIdx).pt;
-
-    // Corresponding point from camera.
-    const cameraPoint = cameraKeypoints.get(match.trainIdx).pt;
-
-    referencePoints.push(referencePoint.x, referencePoint.y);
-
-    cameraPoints.push(cameraPoint.x, cameraPoint.y);
-  }
-
-  // Convert JavaScript arrays
-  // into OpenCV matrices.
-  const referenceMat = cv.matFromArray(
-    goodMatches.length,
-    1,
-    cv.CV_32FC2,
-    referencePoints,
-  );
-
-  const cameraMatPoints = cv.matFromArray(
-    goodMatches.length,
-    1,
-    cv.CV_32FC2,
-    cameraPoints,
-  );
-
-  // ------------------------------------------------
-  // FIND HOMOGRAPHY
-  // ------------------------------------------------
-
-  const inliers = new cv.Mat();
-
-  const homography = cv.findHomography(
-    referenceMat,
-    cameraMatPoints,
-    cv.RANSAC,
-    3.0,
-    inliers,
-    2000,
-    0.995,
-  );
-
-  if (homography.empty()) {
-    console.log("Could not calculate card position.");
-
-    gray.delete();
-    orb.delete();
-    cameraKeypoints.delete();
-    cameraDescriptors.delete();
-    matcher.delete();
-    matches.delete();
-    referenceMat.delete();
-    cameraMatPoints.delete();
+    srcMat.delete();
+    dstMat.delete();
     inliers.delete();
-    homography.delete();
+    referenceCorners.delete();
+    cameraCorners.delete();
 
+    return {
+      found: true,
+      corners: corners,
+      homography: H,
+      matches: goodMatches.length,
+      area: area,
+    };
+  } catch (error) {
+    console.error("❌ Card matching error:", error);
     return null;
   }
+};
 
-  // ------------------------------------------------
-  // FIND FOUR CORNERS OF THE CARD
-  // ------------------------------------------------
-
-  const referenceCorners = cv.matFromArray(4, 1, cv.CV_32FC2, [
-    0,
-    0,
-
-    referenceWidth,
-    0,
-
-    referenceWidth,
-    referenceHeight,
-
-    0,
-    referenceHeight,
-  ]);
-
-  const cameraCorners = new cv.Mat();
-
-  // Move reference card corners
-  // into their positions in camera image.
-  cv.perspectiveTransform(referenceCorners, cameraCorners, homography);
-
-  const data = cameraCorners.data32F;
-
-  const corners = [
-    {
-      x: data[0],
-      y: data[1],
-    },
-
-    {
-      x: data[2],
-      y: data[3],
-    },
-
-    {
-      x: data[4],
-      y: data[5],
-    },
-
-    {
-      x: data[6],
-      y: data[7],
-    },
-  ];
-
-  console.log("Card found!", corners);
-
-  // ------------------------------------------------
-  // CLEAN TEMPORARY OPENCV OBJECTS
-  // ------------------------------------------------
-
-  gray.delete();
-  orb.delete();
-  cameraKeypoints.delete();
-  cameraDescriptors.delete();
-  matcher.delete();
-  matches.delete();
-  referenceMat.delete();
-  cameraMatPoints.delete();
-  inliers.delete();
-  referenceCorners.delete();
-  cameraCorners.delete();
-
-  // IMPORTANT:
-  // We do NOT delete homography here.
-  //
-  // We are returning it to the caller.
-  // The caller must delete it when finished.
-  return {
-    found: true,
-
-    corners,
-
-    homography,
-
-    matches: goodMatches.length,
-  };
-}
-
-// --------------------------------------------------
-// 3. CLEAN UP REFERENCE CARD
-// --------------------------------------------------
-
-export function cleanupReferenceCard() {
+/**
+ * Cleanup reference data
+ */
+export const cleanupReference = () => {
+  if (referenceMat) {
+    referenceMat.delete();
+    referenceMat = null;
+  }
   if (referenceKeypoints) {
     referenceKeypoints.delete();
     referenceKeypoints = null;
   }
-
   if (referenceDescriptors) {
     referenceDescriptors.delete();
     referenceDescriptors = null;
   }
-
-  referenceWidth = 0;
-  referenceHeight = 0;
-
-  console.log("Reference card cleaned up.");
-}
+};
