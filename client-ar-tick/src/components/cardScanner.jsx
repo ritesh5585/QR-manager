@@ -1,6 +1,3 @@
-// src/components/CardScanner.jsx
-// COMPLETE FIXED VERSION - Mobile camera support
-
 import React, { useEffect, useRef, useState, useCallback } from "react";
 import { motion } from "framer-motion";
 import { toast } from "react-hot-toast";
@@ -18,11 +15,11 @@ import {
 } from "../utils/cardMatcher";
 import { warpCard, drawCardBounds } from "../utils/cardWarp";
 import {
-  // computeGlobalThreshold,
+  computeGlobalThreshold,
   analyzeCheckboxes,
 } from "../utils/checkboxDetector";
 // ✅ FIXED: Import from src/cards, not public
-import { CARD_CONFIG } from "../cards/eatingStyle/config";
+import { CARD_CONFIG } from "../cards/config";
 
 // ---- Icons ----
 const CameraOffIcon = (props) => (
@@ -336,7 +333,7 @@ const CardScanner = ({ onCardScanned, qrId }) => {
       }
     };
 
-    // Detection function
+    // In the detectCard function:
     const detectCard = (ctx, canvas) => {
       try {
         const cv = window.cv;
@@ -348,8 +345,19 @@ const CardScanner = ({ onCardScanned, qrId }) => {
           setMatches(result.matches);
           setCardFound(true);
 
-          drawCardBounds(cv, src, result.corners);
-          cv.imshow(displayCanvasRef.current, src);
+          // Don't draw to display canvas - draw to separate canvas instead
+          const debugCanvas = document.createElement("canvas");
+          debugCanvas.width = canvas.width;
+          debugCanvas.height = canvas.height;
+          const debugCtx = debugCanvas.getContext("2d");
+          debugCtx.drawImage(canvas, 0, 0);
+
+          const debugMat = cv.imread(debugCanvas);
+          drawCardBounds(cv, debugMat, result.corners);
+          // cv.imshow(displayCanvasRef.current, debugMat); // Remove this line
+
+          debugMat.delete();
+          debugCanvas.remove();
 
           stableFrames.current += 1;
           setCardDetected(stableFrames.current >= STABLE_FRAMES_REQUIRED);
@@ -367,15 +375,16 @@ const CardScanner = ({ onCardScanned, qrId }) => {
           setCardFound(false);
           setCardDetected(false);
           stableFrames.current = 0;
+          // Reset processed flag when card is lost
+          processed.current = false;
         }
 
         src.delete();
       } catch (err) {
         console.error("Detection error:", err);
+        processed.current = false;
       }
     };
-
-    // Process card after detection
     const processCard = (cv, canvas, result) => {
       try {
         const srcMat = cv.imread(canvas);
@@ -389,56 +398,195 @@ const CardScanner = ({ onCardScanned, qrId }) => {
         );
 
         if (warped && !warped.empty()) {
+          console.log("✅ Card warped successfully");
+          console.log("Warped dimensions:", warped.cols, "x", warped.rows);
+
+          // Check if card is inverted (dark/light)
+          const isInverted = checkCardInversion(cv, warped);
+
+          let analysisWarped = warped;
+          if (isInverted) {
+            console.log("🔄 Card appears inverted, inverting...");
+            const inverted = new cv.Mat();
+            cv.bitwise_not(warped, inverted);
+            analysisWarped = inverted;
+          }
+
           const globalThreshold = computeGlobalThreshold(
             cv,
-            warped,
+            analysisWarped,
             CARD_CONFIG.checkboxes,
           );
 
+          console.log("📊 Global threshold:", globalThreshold);
+
           const analysis = analyzeCheckboxes(
             cv,
-            warped,
+            analysisWarped,
             CARD_CONFIG,
             globalThreshold,
           );
 
           console.log("📊 Detection results:", analysis);
+          console.log("Checked boxes:", analysis.checkedBoxes);
+          console.log("Checked count:", analysis.checkedCount);
 
-          const warpedCanvas = document.createElement("canvas");
-          warpedCanvas.width = CARD_CONFIG.cardWidth;
-          warpedCanvas.height = CARD_CONFIG.cardHeight;
-          cv.imshow(warpedCanvas, warped);
-
-          if (analysis.checkedCount > 0) {
-            if (onCardScanned) {
-              onCardScanned(analysis.checkedBoxes, warpedCanvas.toDataURL());
-            }
-
-            if (streamRef.current) {
-              streamRef.current.getTracks().forEach((t) => t.stop());
-              streamRef.current = null;
-            }
-            setCameraOn(false);
-            toast.success(`Found ${analysis.checkedCount} option(s)`);
-          } else {
-            toast.info("No checkboxes detected. Try again.");
-            processed.current = false;
-            stableFrames.current = 0;
-            setCardDetected(false);
+          // FIX: Convert the Mat to a canvas properly before passing it back
+          let cardImageData = null;
+          try {
+            // Create a temporary canvas to convert the Mat to an image
+            const tempCanvas = document.createElement("canvas");
+            tempCanvas.width = CARD_CONFIG.cardWidth;
+            tempCanvas.height = CARD_CONFIG.cardHeight;
+            cv.imshow(tempCanvas, analysisWarped);
+            cardImageData = tempCanvas.toDataURL("image/jpeg", 0.9);
+            tempCanvas.remove(); // Clean up
+          } catch (convertErr) {
+            console.warn(
+              "Could not convert warped image to data URL:",
+              convertErr,
+            );
           }
 
-          warpedCanvas.remove();
-          warped.delete();
+          if (analysis.checkedCount > 0) {
+            console.log("✅ Card scanned successfully:", analysis.checkedBoxes);
+
+            // Call the callback with the proper data
+            if (onCardScanned) {
+              onCardScanned(
+                analysis.checkedBoxes,
+                cardImageData, // Pass the data URL instead of the Mat
+              );
+            }
+
+            toast.success(`Detected ${analysis.checkedCount} option(s)!`);
+
+            // Reset for next scan after a delay
+            setTimeout(() => {
+              processed.current = false;
+              stableFrames.current = 0;
+              setCardDetected(false);
+            }, 2000);
+          } else {
+            toast("No options detected - try adjusting lighting", {
+              icon: "💡",
+              duration: 3000,
+            });
+
+            // Reset for retry
+            setTimeout(() => {
+              processed.current = false;
+              stableFrames.current = 0;
+              setCardDetected(false);
+            }, 1000);
+          }
+
+          // Clean up OpenCV Mats
+          if (analysisWarped !== warped && analysisWarped) {
+            analysisWarped.delete();
+          }
+          if (warped) {
+            warped.delete();
+          }
         } else {
-          console.error("❌ Failed to warp card");
+          console.error("❌ Failed to warp card - warped is empty");
           processed.current = false;
+          stableFrames.current = 0;
+          setCardDetected(false);
         }
 
-        srcMat.delete();
+        if (srcMat) {
+          srcMat.delete();
+        }
       } catch (err) {
         console.error("❌ Card processing error:", err);
+        console.error("Error details:", err.message, err.code);
         processed.current = false;
+        stableFrames.current = 0;
+        setCardDetected(false);
+
+        // Show user-friendly error
+        toast.error("Failed to process card. Please try again.");
       }
+    };
+    // Helper to check if card is inverted (dark background, light text vs light background, dark text)
+    const checkCardInversion = (cv, mat) => {
+      // Sample the corners and center to determine if card is inverted
+      const corners = [
+        [0, 0],
+        [0, mat.rows - 1],
+        [mat.cols - 1, 0],
+        [mat.cols - 1, mat.rows - 1],
+        [Math.floor(mat.cols / 2), Math.floor(mat.rows / 2)],
+      ];
+
+      let totalBrightness = 0;
+      corners.forEach(([x, y]) => {
+        const pixel = mat.ucharPtr(y, x);
+        totalBrightness += pixel[0]; // Assuming grayscale
+      });
+
+      const avgBrightness = totalBrightness / corners.length;
+      console.log("Average corner brightness:", avgBrightness);
+
+      // If corners are dark (< 128), card might be inverted
+      return avgBrightness < 80;
+    };
+
+    // Visualization helper
+    const createCheckboxVisualization = (cv, mat, config, analysis) => {
+      const vizCanvas = document.createElement("canvas");
+      vizCanvas.width = mat.cols;
+      vizCanvas.height = mat.rows;
+
+      const rgbMat = new cv.Mat();
+      cv.cvtColor(mat, rgbMat, cv.COLOR_GRAY2RGB);
+
+      // Draw checkbox regions
+      config.checkboxes.forEach((checkbox) => {
+        const color = analysis.checkedBoxes?.includes(checkbox.id)
+          ? [0, 255, 0, 255] // Green for checked
+          : [255, 0, 0, 255]; // Red for unchecked
+
+        cv.rectangle(
+          rgbMat,
+          new cv.Point(checkbox.x, checkbox.y),
+          new cv.Point(
+            checkbox.x + checkbox.width,
+            checkbox.y + checkbox.height,
+          ),
+          color,
+          2,
+        );
+
+        // Add label
+        cv.putText(
+          rgbMat,
+          checkbox.id || "?",
+          new cv.Point(checkbox.x, checkbox.y - 5),
+          cv.FONT_HERSHEY_SIMPLEX,
+          0.5,
+          color,
+          1,
+        );
+      });
+
+      cv.imshow(vizCanvas, rgbMat);
+      rgbMat.delete();
+
+      // Show visualization briefly
+      vizCanvas.style.cssText = `
+    position: fixed;
+    bottom: 10px;
+    right: 10px;
+    width: 200px;
+    border: 2px solid white;
+    z-index: 1000;
+  `;
+      document.body.appendChild(vizCanvas);
+      setTimeout(() => vizCanvas.remove(), 5000);
+
+      return vizCanvas;
     };
 
     // Draw overlay

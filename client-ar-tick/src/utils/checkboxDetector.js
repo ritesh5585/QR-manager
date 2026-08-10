@@ -1,13 +1,10 @@
 // src/utils/checkboxDetector.js
-// COMPLETE FIXED VERSION
+// COMPLETE FIXED VERSION - All functions properly exported
 
 /**
  * ============================================================
  * DETECT ONE CHECKBOX
  * ============================================================
- *
- * Input: checkboxMat = image of ONE checkbox
- * Output: percentage of dark/ink pixels inside the checkbox
  */
 export function detectCheckbox(cv, checkboxMat, threshold = 120) {
   try {
@@ -52,11 +49,8 @@ export function detectCheckbox(cv, checkboxMat, threshold = 120) {
 
 /**
  * ============================================================
- * COMPUTE GLOBAL THRESHOLD
+ * COMPUTE GLOBAL THRESHOLD - ✅ UNCOMMENTED AND EXPORTED
  * ============================================================
- *
- * Uses Otsu thresholding on the entire checkbox band
- * This gives a stable threshold for all checkboxes
  */
 export function computeGlobalThreshold(cv, warped, checkboxConfigs) {
   try {
@@ -114,6 +108,14 @@ export function analyzeCheckboxes(cv, warpedCard, config, globalThreshold) {
   const results = [];
   const threshold = globalThreshold || 120;
 
+  console.log("📊 Analyzing checkboxes with threshold:", threshold);
+  console.log(
+    "📊 Warped card dimensions:",
+    warpedCard.cols,
+    "x",
+    warpedCard.rows,
+  );
+
   for (const checkbox of config.checkboxes) {
     const { x, y, width, height } = checkbox.roi;
 
@@ -121,6 +123,13 @@ export function analyzeCheckboxes(cv, warpedCard, config, globalThreshold) {
     const roiY = Math.round(y * warpedCard.rows);
     const roiWidth = Math.round(width * warpedCard.cols);
     const roiHeight = Math.round(height * warpedCard.rows);
+
+    console.log(`📊 Checkbox ${checkbox.number} ROI:`, {
+      roiX,
+      roiY,
+      roiWidth,
+      roiHeight,
+    });
 
     const rectangle = new cv.Rect(roiX, roiY, roiWidth, roiHeight);
     const checkboxImage = warpedCard.roi(rectangle);
@@ -139,10 +148,27 @@ export function analyzeCheckboxes(cv, warpedCard, config, globalThreshold) {
     checkboxImage.delete();
   }
 
+  console.log(
+    "📊 Raw fill percentages:",
+    results.map((r) => ({
+      number: r.number,
+      fill: r.fillPercentage + "%",
+    })),
+  );
+
   // Find baseline (minimum fill)
   const baseline = Math.min(...results.map((r) => r.fillPercentage));
   const margin = config.detection?.margin || 15;
   const minFill = config.detection?.minFillPercentage || 8;
+
+  console.log(
+    "📊 Baseline:",
+    baseline + "%",
+    "Margin:",
+    margin,
+    "Min Fill:",
+    minFill,
+  );
 
   // Determine which boxes are checked
   for (const result of results) {
@@ -150,9 +176,18 @@ export function analyzeCheckboxes(cv, warpedCard, config, globalThreshold) {
     result.isChecked =
       diffFromBaseline >= margin && result.fillPercentage >= minFill;
     result.diffFromBaseline = Math.round(diffFromBaseline);
+
+    console.log(
+      `📊 Box ${result.number}: fill=${result.fillPercentage}%, diff=${diffFromBaseline}%, checked=${result.isChecked}`,
+    );
   }
 
   const checkedBoxes = results.filter((r) => r.isChecked);
+
+  console.log(
+    "✅ Checked boxes:",
+    checkedBoxes.map((r) => r.number),
+  );
 
   return {
     results,
