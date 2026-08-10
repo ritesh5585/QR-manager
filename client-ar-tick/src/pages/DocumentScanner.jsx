@@ -1,43 +1,55 @@
+// src/pages/DocumentScanner.jsx
+
 import React, { useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { toast } from "react-hot-toast";
 import CardScanner from "../components/CardScanner";
+import ErrorModal from "../components/ErrorModal";
 import { assignQR } from "../service/api.service";
 
 const DocumentScanner = () => {
   const { qrId } = useParams();
   const navigate = useNavigate();
   const [isProcessing, setIsProcessing] = useState(false);
-  const [scanError, setScanError] = useState(null);
-  const [showErrorModal, setShowErrorModal] = useState(false);
+  const [errorModal, setErrorModal] = useState({
+    isOpen: false,
+    title: "",
+    message: "",
+  });
 
   const handleCardScanned = async (checkedBoxes, warpedImage) => {
     setIsProcessing(true);
-    setScanError(null);
 
     console.log("📊 Card scanned:", checkedBoxes);
     console.log("📊 QR ID:", qrId);
 
     try {
-      // ✅ Check if any boxes were detected
+      // Check if any boxes were detected
       if (!checkedBoxes || checkedBoxes.length === 0) {
         console.warn("⚠️ No checkboxes detected");
-        setScanError("No checkboxes detected on the card. Please try again.");
-        setShowErrorModal(true);
+        setErrorModal({
+          isOpen: true,
+          title: "No Checkboxes Detected",
+          message:
+            "No checkboxes were found on the card. Please make sure the card is properly aligned and well-lit.",
+        });
         setIsProcessing(false);
         return;
       }
 
-      // ✅ Check if qrId exists
+      // Check if qrId exists
       if (!qrId) {
         console.error("❌ No QR ID provided");
-        setScanError("Invalid QR code. Please try again.");
-        setShowErrorModal(true);
+        setErrorModal({
+          isOpen: true,
+          title: "Invalid QR Code",
+          message: "The QR code ID is missing. Please try scanning again.",
+        });
         setIsProcessing(false);
         return;
       }
 
-      // ✅ Prepare payload
+      // Prepare payload
       const payload = checkedBoxes.map((box) => ({
         number: box.number,
         title: box.title,
@@ -47,78 +59,65 @@ const DocumentScanner = () => {
 
       console.log("📤 Sending payload:", JSON.stringify(payload, null, 2));
 
-      // ✅ Call API
+      // Call API
       const result = await assignQR(qrId, payload);
       console.log("✅ API Response:", result);
 
-      // ✅ Success - navigate to result page
+      // Success - navigate to result page
       toast.success(`✅ Found ${checkedBoxes.length} option(s)!`);
       navigate(`/result/${qrId}`);
     } catch (error) {
-      console.error("❌ Error saving results:", error);
+      console.error("Error saving results:", error);
 
-      // ✅ Check if it's a network error
+      // Check error type
+      let message = "Failed to save results. Please try again.";
       if (
         error.message?.includes("Failed to fetch") ||
         error.message?.includes("Network")
       ) {
-        setScanError("Network error. Please check your connection.");
-      } else {
-        setScanError(
-          error.message || "Failed to save results. Please try again.",
-        );
+        message = "Network error. Please check your internet connection.";
+      } else if (error.message?.includes("CORS")) {
+        message = "CORS error. Please check the server configuration.";
+      } else if (error.message) {
+        message = error.message;
       }
 
-      setShowErrorModal(true);
+      setErrorModal({
+        isOpen: true,
+        title: "Save Failed",
+        message: message,
+      });
       toast.error("Failed to save results");
     } finally {
       setIsProcessing(false);
     }
   };
 
-  // ✅ Error Modal Component
-  const ErrorModal = () => {
-    if (!showErrorModal) return null;
+  // Handle error modal actions
+  const handleErrorRetry = () => {
+    setErrorModal({ isOpen: false, title: "", message: "" });
+    window.location.reload();
+  };
 
-    return (
-      <div className="fixed inset-0 flex items-center justify-center bg-black/50 z-50">
-        <div className="bg-white rounded-lg p-8 max-w-md w-full mx-4 text-center shadow-2xl">
-          <div className="text-6xl mb-4">⚠️</div>
-          <h2 className="text-xl font-bold text-red-600 mb-2">Scan Failed</h2>
-          <p className="text-gray-600 mb-6">
-            {scanError || "Something went wrong. Please try again."}
-          </p>
-          <div className="flex gap-3 justify-center">
-            <button
-              onClick={() => {
-                setShowErrorModal(false);
-                setScanError(null);
-                window.location.reload();
-              }}
-              className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition"
-            >
-              Try Again
-            </button>
-            <button
-              onClick={() => navigate(-1)}
-              className="px-6 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 transition"
-            >
-              Cancel
-            </button>
-          </div>
-        </div>
-      </div>
-    );
+  const handleErrorCancel = () => {
+    setErrorModal({ isOpen: false, title: "", message: "" });
+    navigate(-1);
   };
 
   return (
     <div className="min-h-screen bg-[#f3e8d4]">
       <CardScanner onCardScanned={handleCardScanned} qrId={qrId} />
 
-      {/* ✅ Error Modal */}
-      <ErrorModal />
+      {/* Error Modal */}
+      <ErrorModal
+        isOpen={errorModal.isOpen}
+        title={errorModal.title}
+        message={errorModal.message}
+        onRetry={handleErrorRetry}
+        onCancel={handleErrorCancel}
+      />
 
-      {/* ✅ Processing Overlay */}
+      {/* Processing Overlay */}
       {isProcessing && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-40">
           <div className="bg-white rounded-lg p-6 flex flex-col items-center shadow-xl">

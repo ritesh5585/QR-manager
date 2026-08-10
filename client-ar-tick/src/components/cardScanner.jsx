@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState, useCallback } from "react";
-import { motion } from "framer-motion";
+import { motion, AnimatePresence } from "framer-motion";
 import { toast } from "react-hot-toast";
 import {
   requestCameraWithFallback,
@@ -18,7 +18,6 @@ import {
   computeGlobalThreshold,
   analyzeCheckboxes,
 } from "../utils/checkboxDetector";
-// ✅ FIXED: Import from src/cards, not public
 import { CARD_CONFIG } from "../cards/config";
 
 // ---- Icons ----
@@ -76,6 +75,24 @@ const FlashOffIcon = (props) => (
       opacity="0.4"
     />
     <path d="M2 2l20 20" strokeLinecap="round" />
+  </svg>
+);
+
+const FlipIcon = (props) => (
+  <svg
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="2"
+    {...props}
+  >
+    <path
+      d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    />
+    <path d="M8 12l4-4 4 4" strokeLinecap="round" strokeLinejoin="round" />
+    <path d="M12 8v12" strokeLinecap="round" strokeLinejoin="round" />
   </svg>
 );
 
@@ -251,6 +268,37 @@ const CardScanner = ({ onCardScanned, qrId }) => {
     }
   }, [cameraOn, startCamera]);
 
+  // Toggle torch
+  const toggleTorch = useCallback(async () => {
+    if (!torchAvailable) return;
+    const next = !torchOn;
+    const ok = await setTorch(trackRef.current, next);
+    if (ok) setTorchOn(next);
+  }, [torchOn, torchAvailable]);
+
+  // Flip camera
+  const flipCamera = useCallback(async () => {
+    if (isFlipping) return;
+    setIsFlipping(true);
+
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach((t) => t.stop());
+      streamRef.current = null;
+      trackRef.current = null;
+    }
+
+    const newFacingMode = facingMode === "environment" ? "user" : "environment";
+    setFacingMode(newFacingMode);
+
+    try {
+      await startCamera();
+    } catch (err) {
+      console.error("Flip error:", err);
+    }
+
+    setIsFlipping(false);
+  }, [facingMode, isFlipping, startCamera]);
+
   // Main render loop
   useEffect(() => {
     if (
@@ -333,7 +381,7 @@ const CardScanner = ({ onCardScanned, qrId }) => {
       }
     };
 
-    // In the detectCard function:
+    // Detection function
     const detectCard = (ctx, canvas) => {
       try {
         const cv = window.cv;
@@ -345,7 +393,7 @@ const CardScanner = ({ onCardScanned, qrId }) => {
           setMatches(result.matches);
           setCardFound(true);
 
-          // Don't draw to display canvas - draw to separate canvas instead
+          // Draw debug bounds
           const debugCanvas = document.createElement("canvas");
           debugCanvas.width = canvas.width;
           debugCanvas.height = canvas.height;
@@ -354,8 +402,6 @@ const CardScanner = ({ onCardScanned, qrId }) => {
 
           const debugMat = cv.imread(debugCanvas);
           drawCardBounds(cv, debugMat, result.corners);
-          // cv.imshow(displayCanvasRef.current, debugMat); // Remove this line
-
           debugMat.delete();
           debugCanvas.remove();
 
@@ -375,7 +421,6 @@ const CardScanner = ({ onCardScanned, qrId }) => {
           setCardFound(false);
           setCardDetected(false);
           stableFrames.current = 0;
-          // Reset processed flag when card is lost
           processed.current = false;
         }
 
@@ -385,6 +430,8 @@ const CardScanner = ({ onCardScanned, qrId }) => {
         processed.current = false;
       }
     };
+
+    // Process card after detection
     const processCard = (cv, canvas, result) => {
       try {
         const srcMat = cv.imread(canvas);
@@ -399,69 +446,43 @@ const CardScanner = ({ onCardScanned, qrId }) => {
 
         if (warped && !warped.empty()) {
           console.log("✅ Card warped successfully");
-          console.log("Warped dimensions:", warped.cols, "x", warped.rows);
-
-          // Check if card is inverted (dark/light)
-          const isInverted = checkCardInversion(cv, warped);
-
-          let analysisWarped = warped;
-          if (isInverted) {
-            console.log("🔄 Card appears inverted, inverting...");
-            const inverted = new cv.Mat();
-            cv.bitwise_not(warped, inverted);
-            analysisWarped = inverted;
-          }
 
           const globalThreshold = computeGlobalThreshold(
             cv,
-            analysisWarped,
+            warped,
             CARD_CONFIG.checkboxes,
           );
 
-          console.log("📊 Global threshold:", globalThreshold);
-
           const analysis = analyzeCheckboxes(
             cv,
-            analysisWarped,
+            warped,
             CARD_CONFIG,
             globalThreshold,
           );
 
           console.log("📊 Detection results:", analysis);
-          console.log("Checked boxes:", analysis.checkedBoxes);
-          console.log("Checked count:", analysis.checkedCount);
 
-          // FIX: Convert the Mat to a canvas properly before passing it back
           let cardImageData = null;
           try {
-            // Create a temporary canvas to convert the Mat to an image
             const tempCanvas = document.createElement("canvas");
             tempCanvas.width = CARD_CONFIG.cardWidth;
             tempCanvas.height = CARD_CONFIG.cardHeight;
-            cv.imshow(tempCanvas, analysisWarped);
+            cv.imshow(tempCanvas, warped);
             cardImageData = tempCanvas.toDataURL("image/jpeg", 0.9);
-            tempCanvas.remove(); // Clean up
+            tempCanvas.remove();
           } catch (convertErr) {
-            console.warn(
-              "Could not convert warped image to data URL:",
-              convertErr,
-            );
+            console.warn("Could not convert warped image:", convertErr);
           }
 
           if (analysis.checkedCount > 0) {
             console.log("✅ Card scanned successfully:", analysis.checkedBoxes);
 
-            // Call the callback with the proper data
             if (onCardScanned) {
-              onCardScanned(
-                analysis.checkedBoxes,
-                cardImageData, // Pass the data URL instead of the Mat
-              );
+              onCardScanned(analysis.checkedBoxes, cardImageData);
             }
 
             toast.success(`Detected ${analysis.checkedCount} option(s)!`);
 
-            // Reset for next scan after a delay
             setTimeout(() => {
               processed.current = false;
               stableFrames.current = 0;
@@ -473,7 +494,6 @@ const CardScanner = ({ onCardScanned, qrId }) => {
               duration: 3000,
             });
 
-            // Reset for retry
             setTimeout(() => {
               processed.current = false;
               stableFrames.current = 0;
@@ -481,15 +501,9 @@ const CardScanner = ({ onCardScanned, qrId }) => {
             }, 1000);
           }
 
-          // Clean up OpenCV Mats
-          if (analysisWarped !== warped && analysisWarped) {
-            analysisWarped.delete();
-          }
-          if (warped) {
-            warped.delete();
-          }
+          warped.delete();
         } else {
-          console.error("❌ Failed to warp card - warped is empty");
+          console.error("❌ Failed to warp card");
           processed.current = false;
           stableFrames.current = 0;
           setCardDetected(false);
@@ -500,93 +514,11 @@ const CardScanner = ({ onCardScanned, qrId }) => {
         }
       } catch (err) {
         console.error("❌ Card processing error:", err);
-        console.error("Error details:", err.message, err.code);
         processed.current = false;
         stableFrames.current = 0;
         setCardDetected(false);
-
-        // Show user-friendly error
         toast.error("Failed to process card. Please try again.");
       }
-    };
-    // Helper to check if card is inverted (dark background, light text vs light background, dark text)
-    const checkCardInversion = (cv, mat) => {
-      // Sample the corners and center to determine if card is inverted
-      const corners = [
-        [0, 0],
-        [0, mat.rows - 1],
-        [mat.cols - 1, 0],
-        [mat.cols - 1, mat.rows - 1],
-        [Math.floor(mat.cols / 2), Math.floor(mat.rows / 2)],
-      ];
-
-      let totalBrightness = 0;
-      corners.forEach(([x, y]) => {
-        const pixel = mat.ucharPtr(y, x);
-        totalBrightness += pixel[0]; // Assuming grayscale
-      });
-
-      const avgBrightness = totalBrightness / corners.length;
-      console.log("Average corner brightness:", avgBrightness);
-
-      // If corners are dark (< 128), card might be inverted
-      return avgBrightness < 80;
-    };
-
-    // Visualization helper
-    const createCheckboxVisualization = (cv, mat, config, analysis) => {
-      const vizCanvas = document.createElement("canvas");
-      vizCanvas.width = mat.cols;
-      vizCanvas.height = mat.rows;
-
-      const rgbMat = new cv.Mat();
-      cv.cvtColor(mat, rgbMat, cv.COLOR_GRAY2RGB);
-
-      // Draw checkbox regions
-      config.checkboxes.forEach((checkbox) => {
-        const color = analysis.checkedBoxes?.includes(checkbox.id)
-          ? [0, 255, 0, 255] // Green for checked
-          : [255, 0, 0, 255]; // Red for unchecked
-
-        cv.rectangle(
-          rgbMat,
-          new cv.Point(checkbox.x, checkbox.y),
-          new cv.Point(
-            checkbox.x + checkbox.width,
-            checkbox.y + checkbox.height,
-          ),
-          color,
-          2,
-        );
-
-        // Add label
-        cv.putText(
-          rgbMat,
-          checkbox.id || "?",
-          new cv.Point(checkbox.x, checkbox.y - 5),
-          cv.FONT_HERSHEY_SIMPLEX,
-          0.5,
-          color,
-          1,
-        );
-      });
-
-      cv.imshow(vizCanvas, rgbMat);
-      rgbMat.delete();
-
-      // Show visualization briefly
-      vizCanvas.style.cssText = `
-    position: fixed;
-    bottom: 10px;
-    right: 10px;
-    width: 200px;
-    border: 2px solid white;
-    z-index: 1000;
-  `;
-      document.body.appendChild(vizCanvas);
-      setTimeout(() => vizCanvas.remove(), 5000);
-
-      return vizCanvas;
     };
 
     // Draw overlay
@@ -596,18 +528,25 @@ const CardScanner = ({ onCardScanned, qrId }) => {
       const x = (width - boxWidth) / 2;
       const y = (height - boxHeight) / 2;
 
+      // Animated border
       ctx.strokeStyle = cardDetected
         ? "#22c55e"
         : cardFound
           ? "#facc15"
           : "rgba(255,255,255,0.3)";
-      ctx.lineWidth = 3;
+      ctx.lineWidth = cardDetected ? 4 : 3;
       ctx.setLineDash([10, 10]);
       ctx.strokeRect(x, y, boxWidth, boxHeight);
       ctx.setLineDash([]);
 
+      // Corner markers
       const cornerSize = 30;
-      ctx.strokeStyle = cardDetected ? "#22c55e" : "#ffffff80";
+      const cornerColor = cardDetected
+        ? "#22c55e"
+        : cardFound
+          ? "#facc15"
+          : "#ffffff80";
+      ctx.strokeStyle = cornerColor;
       ctx.lineWidth = 4;
 
       // Top-left
@@ -637,6 +576,19 @@ const CardScanner = ({ onCardScanned, qrId }) => {
       ctx.lineTo(x + boxWidth, y + boxHeight);
       ctx.lineTo(x + boxWidth, y + boxHeight - cornerSize);
       ctx.stroke();
+
+      // Status text on overlay
+      if (cardDetected) {
+        ctx.fillStyle = "#22c55e";
+        ctx.font = "bold 14px sans-serif";
+        ctx.textAlign = "center";
+        ctx.fillText("✅ Card Detected", width / 2, y - 20);
+      } else if (cardFound) {
+        ctx.fillStyle = "#facc15";
+        ctx.font = "14px sans-serif";
+        ctx.textAlign = "center";
+        ctx.fillText(`🔍 ${matches} matches found`, width / 2, y - 20);
+      }
     };
 
     animationRef.current = requestAnimationFrame(renderFrame);
@@ -646,7 +598,17 @@ const CardScanner = ({ onCardScanned, qrId }) => {
         cancelAnimationFrame(animationRef.current);
       }
     };
-  }, [cameraOn, cameraError, cvReady, isLoading, facingMode, onCardScanned]);
+  }, [
+    cameraOn,
+    cameraError,
+    cvReady,
+    isLoading,
+    facingMode,
+    onCardScanned,
+    cardDetected,
+    cardFound,
+    matches,
+  ]);
 
   return (
     <div className="fixed inset-0 bg-black overflow-hidden">
@@ -667,67 +629,141 @@ const CardScanner = ({ onCardScanned, qrId }) => {
         style={{ backgroundColor: "#000" }}
       />
 
-      {isLoading || !cvReady ? (
-        <div className="absolute inset-0 flex items-center justify-center bg-black z-10">
-          <div className="text-white text-center">
-            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-white mx-auto mb-4" />
-            <p className="text-lg font-semibold">
-              {!cvReady ? "Loading OpenCV..." : "Starting camera..."}
-            </p>
-          </div>
-        </div>
-      ) : cameraError ? (
-        <div className="absolute inset-0 flex flex-col items-center justify-center bg-black z-10 p-6">
-          <div className="text-center max-w-sm w-full">
-            <div className="w-16 h-16 rounded-full bg-red-500/20 flex items-center justify-center mx-auto mb-4">
-              <CameraOffIcon className="w-8 h-8 text-red-500" />
+      {/* Loading / OpenCV Loading */}
+      <AnimatePresence>
+        {(isLoading || !cvReady) && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="absolute inset-0 flex items-center justify-center bg-black z-10"
+          >
+            <div className="text-white text-center">
+              <motion.div
+                animate={{ rotate: 360 }}
+                transition={{ duration: 1, repeat: Infinity, ease: "linear" }}
+                className="w-16 h-16 border-4 border-blue-500 border-t-transparent rounded-full mx-auto mb-4"
+              />
+              <p className="text-lg font-semibold">
+                {!cvReady ? "Loading OpenCV..." : "Starting camera..."}
+              </p>
+              <p className="text-sm text-gray-400 mt-2">
+                {!cvReady
+                  ? "Downloading computer vision library..."
+                  : "Please allow camera access"}
+              </p>
             </div>
-            <p className="text-red-500 text-lg font-semibold">Camera Error</p>
-            <p className="text-red-400 text-sm mt-2">{cameraError}</p>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
-            {permissionStatus === "denied" && (
-              <div className="mt-4 p-4 bg-yellow-500/20 rounded-lg">
-                <p className="text-yellow-400 text-sm">
-                  To enable camera access on mobile:
-                  <br />
-                  1. Tap the 🔒 icon in the address bar
-                  <br />
-                  2. Allow camera permissions
-                  <br />
-                  3. Refresh the page
-                </p>
+      {/* Camera Error */}
+      <AnimatePresence>
+        {cameraError && (
+          <motion.div
+            initial={{ opacity: 0, scale: 0.9 }}
+            animate={{ opacity: 1, scale: 1 }}
+            exit={{ opacity: 0, scale: 0.9 }}
+            className="absolute inset-0 flex flex-col items-center justify-center bg-black z-10 p-6"
+          >
+            <div className="text-center max-w-sm w-full">
+              <div className="w-20 h-20 rounded-full bg-red-500/20 flex items-center justify-center mx-auto mb-4">
+                <CameraOffIcon className="w-10 h-10 text-red-500" />
               </div>
-            )}
+              <h2 className="text-white text-xl font-bold mb-2">
+                Camera Error
+              </h2>
+              <p className="text-red-400 text-sm">{cameraError}</p>
 
-            <button
-              onClick={() => {
-                setCameraError(null);
-                startCamera();
-              }}
-              className="mt-4 px-6 py-2 bg-white text-black rounded-full font-medium"
-            >
-              Retry
-            </button>
-          </div>
-        </div>
-      ) : (
-        <>
-          <div className="absolute inset-0 bg-gradient-to-b from-black/60 via-transparent to-black/70 pointer-events-none z-10" />
+              {permissionStatus === "denied" && (
+                <div className="mt-4 p-4 bg-yellow-500/20 rounded-lg border border-yellow-500/30">
+                  <p className="text-yellow-400 text-sm">
+                    To enable camera access on mobile:
+                    <br />
+                    1. Tap the 🔒 icon in the address bar
+                    <br />
+                    2. Allow camera permissions
+                    <br />
+                    3. Refresh the page
+                  </p>
+                </div>
+              )}
 
-          <div className="absolute top-0 left-0 right-0 flex items-center justify-between px-4 pt-4 z-20">
-            <h1 className="text-white text-lg font-semibold tracking-wide">
-              Scan Your Card
-            </h1>
-            <div className="flex gap-2">
               <button
-                onClick={() => setCameraOn(false)}
-                className="w-11 h-11 rounded-full flex items-center justify-center bg-white/15 text-white backdrop-blur-md"
+                onClick={() => {
+                  setCameraError(null);
+                  startCamera();
+                }}
+                className="mt-6 px-8 py-3 bg-white text-black rounded-full font-medium hover:bg-gray-200 transition"
               >
-                <CameraOffIcon className="w-5 h-5" />
+                Retry
               </button>
             </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Camera is on - Show scanner */}
+      {!cameraError && cameraOn && !isLoading && cvReady && (
+        <>
+          {/* Gradient overlay */}
+          <div className="absolute inset-0 bg-gradient-to-b from-black/60 via-transparent to-black/70 pointer-events-none z-10" />
+
+          {/* Top Controls */}
+          <div className="absolute top-0 left-0 right-0 flex items-center justify-between px-4 pt-4 z-20">
+            <div>
+              <h1 className="text-white text-lg font-semibold tracking-wide drop-shadow-lg">
+                Scan Your Card
+              </h1>
+              <p className="text-gray-300 text-xs mt-1 opacity-80">
+                {qrId ? `QR: ${qrId}` : "Place card in frame"}
+              </p>
+            </div>
+            <div className="flex gap-2">
+              {/* Flip Camera Button */}
+              <motion.button
+                whileTap={{ scale: 0.9 }}
+                onClick={flipCamera}
+                disabled={isFlipping}
+                className="w-11 h-11 rounded-full flex items-center justify-center backdrop-blur-md bg-white/20 text-white hover:bg-white/30 transition-all disabled:opacity-50 border border-white/10"
+                aria-label="Flip camera"
+              >
+                <FlipIcon className="w-5 h-5" />
+              </motion.button>
+
+              {/* Flashlight Button */}
+              {torchAvailable && (
+                <motion.button
+                  whileTap={{ scale: 0.9 }}
+                  onClick={toggleTorch}
+                  className={`w-11 h-11 rounded-full flex items-center justify-center backdrop-blur-md transition-all border border-white/10 ${
+                    torchOn
+                      ? "bg-yellow-400 text-black"
+                      : "bg-white/20 text-white hover:bg-white/30"
+                  }`}
+                  aria-label="Toggle flashlight"
+                >
+                  {torchOn ? (
+                    <FlashOnIcon className="w-5 h-5" />
+                  ) : (
+                    <FlashOffIcon className="w-5 h-5" />
+                  )}
+                </motion.button>
+              )}
+
+              {/* Close Camera Button */}
+              <motion.button
+                whileTap={{ scale: 0.9 }}
+                onClick={() => setCameraOn(false)}
+                className="w-11 h-11 rounded-full flex items-center justify-center backdrop-blur-md bg-white/20 text-white hover:bg-white/30 transition-all border border-white/10"
+                aria-label="Turn camera off"
+              >
+                <CameraOffIcon className="w-5 h-5" />
+              </motion.button>
+            </div>
           </div>
 
+          {/* Card Guide Box */}
           <div className="absolute inset-0 flex items-center justify-center pointer-events-none px-10 z-10">
             <motion.div
               animate={{
@@ -735,25 +771,31 @@ const CardScanner = ({ onCardScanned, qrId }) => {
                   ? "#22c55e"
                   : cardFound
                     ? "#facc15"
-                    : "#ffffff80",
+                    : "rgba(255,255,255,0.4)",
                 scale: cardDetected ? 1.02 : cardFound ? 1.01 : 1,
+                boxShadow: cardDetected
+                  ? "0 0 60px rgba(34, 197, 94, 0.3)"
+                  : cardFound
+                    ? "0 0 40px rgba(250, 204, 21, 0.2)"
+                    : "none",
               }}
-              transition={{ duration: 0.25 }}
+              transition={{ duration: 0.3 }}
               className="w-full max-w-[340px] aspect-[3/5] rounded-2xl border-[3px] border-dashed"
             />
           </div>
 
-          <div className="absolute bottom-10 left-0 right-0 flex flex-col items-center gap-2 px-6 z-20">
+          {/* Bottom Status */}
+          <div className="absolute bottom-10 left-0 right-0 flex flex-col items-center gap-3 px-6 z-20">
             <motion.div
               key={matches}
               initial={{ scale: 0.9, opacity: 0.7 }}
               animate={{ scale: 1, opacity: 1 }}
-              className="bg-black/60 backdrop-blur-md text-white px-4 py-2 rounded-full text-sm flex items-center gap-2"
+              className="bg-black/60 backdrop-blur-xl text-white px-6 py-3 rounded-full text-sm flex items-center gap-3 border border-white/10"
             >
               <span
-                className={`w-2 h-2 rounded-full ${
+                className={`w-3 h-3 rounded-full ${
                   cardDetected
-                    ? "bg-green-400"
+                    ? "bg-green-400 animate-pulse"
                     : cardFound
                       ? "bg-yellow-400 animate-pulse"
                       : "bg-red-400 animate-pulse"
@@ -765,8 +807,53 @@ const CardScanner = ({ onCardScanned, qrId }) => {
                   ? `Hold steady... (${matches} matches)`
                   : `Position card in frame (${matches} matches)`}
             </motion.div>
+
+            {/* Progress indicator */}
+            {cardFound && !cardDetected && (
+              <div className="w-48 h-1 bg-white/20 rounded-full overflow-hidden">
+                <motion.div
+                  className="h-full bg-yellow-400 rounded-full"
+                  initial={{ width: "0%" }}
+                  animate={{
+                    width: `${Math.min((stableFrames.current / STABLE_FRAMES_REQUIRED) * 100, 100)}%`,
+                  }}
+                  transition={{ duration: 0.3 }}
+                />
+              </div>
+            )}
           </div>
         </>
+      )}
+
+      {/* Camera Off State */}
+      {!cameraOn && (
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          className="absolute inset-0 flex flex-col items-center justify-center bg-black z-10"
+        >
+          <div className="text-center">
+            <div className="w-20 h-20 rounded-full bg-white/10 flex items-center justify-center mx-auto mb-6">
+              <CameraOnIcon className="w-10 h-10 text-white/70" />
+            </div>
+            <h2 className="text-white text-xl font-semibold mb-2">
+              Camera is Off
+            </h2>
+            <p className="text-gray-400 text-sm mb-6">
+              Turn on the camera to start scanning
+            </p>
+            <button
+              onClick={() => {
+                setCameraOn(true);
+                setIsLoading(true);
+                startCamera();
+              }}
+              className="px-8 py-3 bg-white text-black rounded-full font-medium hover:bg-gray-200 transition"
+            >
+              Turn Camera On
+            </button>
+          </div>
+        </motion.div>
       )}
     </div>
   );

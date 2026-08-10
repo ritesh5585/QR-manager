@@ -1,6 +1,3 @@
-// src/utils/cameraHelper.js
-// Camera helper with mobile-optimized constraints
-
 export const isSecureContext = () => {
   return (
     window.isSecureContext ||
