@@ -4,27 +4,26 @@
 
 export function warpCard(cv, cameraImage, corners, cardWidth, cardHeight) {
   try {
-    // Make sure corners are in this order:
-    //
-    // 0 = top-left
-    // 1 = top-right
-    // 2 = bottom-right
-    // 3 = bottom-left
-    const orderedCorners = orderCorners(corners);
+    // Corners from findCard are already mapped directly from reference card:
+    // 0 = Top-Left (0, 0)
+    // 1 = Top-Right (cardWidth, 0)
+    // 2 = Bottom-Right (cardWidth, cardHeight)
+    // 3 = Bottom-Left (0, cardHeight)
+    const pts = (corners && corners.length === 4) ? corners : orderCorners(corners);
 
     // 1. Tell OpenCV where the card is
     const sourcePoints = cv.matFromArray(4, 1, cv.CV_32FC2, [
-      orderedCorners[0].x,
-      orderedCorners[0].y,
+      pts[0].x,
+      pts[0].y,
 
-      orderedCorners[1].x,
-      orderedCorners[1].y,
+      pts[1].x,
+      pts[1].y,
 
-      orderedCorners[2].x,
-      orderedCorners[2].y,
+      pts[2].x,
+      pts[2].y,
 
-      orderedCorners[3].x,
-      orderedCorners[3].y,
+      pts[3].x,
+      pts[3].y,
     ]);
 
     // ------------------------------------------
