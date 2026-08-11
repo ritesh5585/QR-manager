@@ -1,4 +1,4 @@
-// CardScanner.js - Updated with Dynamic Detection Integration
+// CardScanner.js - Working version with your detection pipeline
 
 import React, { useEffect, useRef, useState, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
@@ -21,10 +21,7 @@ import {
 } from "../utils/checkboxDetector";
 import { CARD_CONFIG } from "../cards/config";
 import DebugOverlay from "./DebugOverlay";
-import DynamicDetector from "../utils/dynamicDetector";
-import AdaptiveProcessor from "../utils/adaptiveProcessor";
-// Add this import at the top with other imports
-import AutoCheckboxDetector from '../utils/AutoCheckboxDetector';
+
 // Simple Icons
 const Icon = ({ name, className, ...props }) => {
   const icons = {
@@ -57,13 +54,6 @@ const Icon = ({ name, className, ...props }) => {
         <path d="M12 8v12" />
       </svg>
     ),
-    dynamic: (p) => (
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" {...p}>
-        <path d="M12 2L2 7l10 5 10-5-10-5z" />
-        <path d="M2 17l10 5 10-5" />
-        <path d="M2 12l10 5 10-5" />
-      </svg>
-    ),
   };
   const IconComponent = icons[name];
   return IconComponent ? <IconComponent className={className} {...props} /> : null;
@@ -74,7 +64,6 @@ const CONFIG = {
   MIN_MATCHES: 25,
   STABLE_FRAMES_REQUIRED: 3,
   CAMERA_TIMEOUT: 10000,
-  DYNAMIC_FRAME_INTERVAL: 300, // Slower when in dynamic mode
 };
 
 const CardScanner = ({ onCardScanned, onDebugInfo, qrId, showDebug = true }) => {
@@ -90,11 +79,6 @@ const CardScanner = ({ onCardScanned, onDebugInfo, qrId, showDebug = true }) => 
   const lastDetection = useRef(0);
   const processed = useRef(false);
   const debugInfoRef = useRef(null);
-  
-  // Dynamic detection refs
-  const dynamicDetectorRef = useRef(null);
-  const adaptiveProcessorRef = useRef(null);
-  const configRef = useRef(CARD_CONFIG);
 
   // State
   const [state, setState] = useState({
@@ -110,10 +94,6 @@ const CardScanner = ({ onCardScanned, onDebugInfo, qrId, showDebug = true }) => 
     cardFound: false,
     matches: 0,
     permissionStatus: "unknown",
-    isDynamicMode: true,
-    dynamicAdjustments: 0,
-    lastDynamicUpdate: null,
-    detectionStats: { confidence: 0, consistency: 0 },
   });
 
   const [debugInfo, setDebugInfo] = useState(null);
@@ -132,38 +112,9 @@ const CardScanner = ({ onCardScanned, onDebugInfo, qrId, showDebug = true }) => 
     cardFound,
     matches,
     permissionStatus,
-    isDynamicMode,
-    dynamicAdjustments,
-    lastDynamicUpdate,
-    detectionStats,
   } = state;
 
   const updateState = useCallback((updates) => setState((prev) => ({ ...prev, ...updates })), []);
-// Add this with other refs
-const autoDetectorRef = useRef(null);
-
-// Add this in the useEffect that initializes dynamic detectors
-useEffect(() => {
-  if (cvReady && window.cv) {
-    dynamicDetectorRef.current = new DynamicDetector();
-    adaptiveProcessorRef.current = new AdaptiveProcessor(CARD_CONFIG);
-    autoDetectorRef.current = new AutoCheckboxDetector(window.cv, {
-      debugMode: true,
-      confidenceThreshold: 0.6,
-      maxHistorySize: 10,
-    });
-    console.log("🧠 Dynamic detectors initialized");
-    console.log("🤖 AutoCheckboxDetector initialized");
-  }
-}, [cvReady]);
-  // Initialize dynamic detectors
-  useEffect(() => {
-    if (cvReady) {
-      dynamicDetectorRef.current = new DynamicDetector();
-      adaptiveProcessorRef.current = new AdaptiveProcessor(CARD_CONFIG);
-      console.log("🧠 Dynamic detectors initialized");
-    }
-  }, [cvReady]);
 
   // Load OpenCV
   useEffect(() => {
@@ -279,13 +230,6 @@ useEffect(() => {
     updateState({ isFlipping: false });
   }, [facingMode, isFlipping, startCamera, updateState]);
 
-  const toggleDynamicMode = useCallback(() => {
-    updateState({ isDynamicMode: !isDynamicMode });
-    toast(isDynamicMode ? "📌 Static mode enabled" : "🧠 Dynamic mode enabled", {
-      icon: isDynamicMode ? "📌" : "🧠",
-    });
-  }, [isDynamicMode, updateState]);
-
   const isCornerStable = useCallback((prevCorners, newCorners, maxDisplacement = 40) => {
     if (!prevCorners || !newCorners || prevCorners.length !== 4 || newCorners.length !== 4) return false;
     for (let i = 0; i < 4; i++) {
@@ -295,32 +239,12 @@ useEffect(() => {
     return true;
   }, []);
 
-  // Handle config updates from DebugOverlay
-  const handleConfigUpdate = useCallback((newConfig) => {
-    console.log("🔄 Config updated:", newConfig);
-    configRef.current = newConfig;
-    // Reset detection state to force re-detection with new config
-    processed.current = false;
-    stableFrames.current = 0;
-    lastCornersRef.current = null;
-    updateState({ cardDetected: false });
-    toast.success("ROI configuration updated");
-  }, [updateState]);
-
-  // Handle dynamic adjustments
-  const handleDynamicAdjust = useCallback((adjustment) => {
-    console.log("⚡ Dynamic adjustment:", adjustment);
-    updateState((prev) => ({
-      ...prev,
-      dynamicAdjustments: prev.dynamicAdjustments + 1,
-      lastDynamicUpdate: new Date().toLocaleTimeString(),
-    }));
-  }, [updateState]);
-
-  // Process card with dynamic detection
-  const processCardWithDynamicDetection = useCallback(async (cv, canvas, result) => {
+  // ============================================================
+  // DETECTION PIPELINE
+  // ============================================================
+  const processCard = useCallback((cv, canvas, result) => {
     try {
-      console.log("🔄 Processing with dynamic detection...");
+      console.log("🔄 Processing detected card...");
       const srcMat = cv.imread(canvas);
 
       const warped = warpCard(cv, srcMat, result.corners, CARD_CONFIG.cardWidth, CARD_CONFIG.cardHeight);
@@ -336,134 +260,25 @@ useEffect(() => {
 
       console.log("✅ Card warped successfully");
 
-      // Convert warped to image data for dynamic detector
-      const tempCanvas = document.createElement("canvas");
-      tempCanvas.width = CARD_CONFIG.cardWidth;
-      tempCanvas.height = CARD_CONFIG.cardHeight;
-      cv.imshow(tempCanvas, warped);
-      const warpedImageData = tempCanvas.getContext("2d").getImageData(
-        0, 0, CARD_CONFIG.cardWidth, CARD_CONFIG.cardHeight
-      );
-      
-      // Run dynamic detection if available and in dynamic mode
-      // Run dynamic detection if available and in dynamic mode
-let detectionResults = null;
-let dynamicAdjustments = null;
-let autoROIs = null;
+      const globalThreshold = computeGlobalThreshold(cv, warped, CARD_CONFIG.checkboxes);
+      console.log("🎚️ Global threshold:", globalThreshold);
 
-if (isDynamicMode) {
-  // Step 1: Auto-detect checkbox positions
-  if (autoDetectorRef.current) {
-    try {
-      const autoDetector = autoDetectorRef.current;
-      autoROIs = autoDetector.detectCheckboxes(warped, configRef.current, true);
-      console.log("🤖 Auto-detected ROIs:", autoROIs);
-      
-      // Update config with auto-detected ROIs if they look good
-      if (autoROIs && autoROIs.length > 0) {
-        const updatedConfig = { ...configRef.current };
-        let roiUpdated = false;
-        
-        autoROIs.forEach((autoRoi, index) => {
-          if (index < updatedConfig.checkboxes.length && autoRoi.detected && autoRoi.confidence > 0.7) {
-            // Only update if confidence is high
-            updatedConfig.checkboxes[index].roi = { ...autoRoi.roi };
-            updatedConfig.checkboxes[index].detected = autoRoi.detected;
-            roiUpdated = true;
-          }
-        });
-        
-        if (roiUpdated) {
-          configRef.current = updatedConfig;
-          console.log("✅ Updated config with auto-detected ROIs");
-        }
-      }
-    } catch (err) {
-      console.error("❌ Auto-detection error:", err);
-    }
-  }
-  
-  // Step 2: Run dynamic detector on the (possibly updated) ROIs
-  if (dynamicDetectorRef.current) {
-    try {
-      // Get current config (may have been updated by auto-detector)
-      const currentConfig = configRef.current;
-      
-      // Run dynamic detection
-      const results = await dynamicDetectorRef.current.detectCheckboxes({
-        data: warpedImageData.data,
-        width: CARD_CONFIG.cardWidth,
-        height: CARD_CONFIG.cardHeight,
-      });
-      
-      detectionResults = results;
-      console.log("🧠 Dynamic detection results:", results);
+      const analysis = analyzeCheckboxes(cv, warped, CARD_CONFIG, globalThreshold, true);
+      console.log("📊 Detection results:", analysis);
 
-      // Process with adaptive processor
-      if (adaptiveProcessorRef.current && results.length > 0) {
-        const adjustments = await adaptiveProcessorRef.current.processResults(results, isDynamicMode);
-        if (adjustments && adjustments.length > 0) {
-          dynamicAdjustments = adjustments;
-          console.log("⚡ Adaptive adjustments:", adjustments);
-          
-          // Update config with dynamic adjustments
-          const updatedConfig = { ...configRef.current };
-          let configUpdated = false;
-          
-          adjustments.forEach(adj => {
-            if (adj.type === 'position_adjustment') {
-              const checkboxIndex = updatedConfig.checkboxes.findIndex(
-                c => c.number === adj.number
-              );
-              if (checkboxIndex !== -1 && adj.direction) {
-                const current = updatedConfig.checkboxes[checkboxIndex].roi;
-                const magnitude = adj.magnitude || 0.002;
-                const newX = Math.max(0.01, Math.min(0.5, current.x + (adj.direction.x || 0) * magnitude));
-                const newY = Math.max(0.3, Math.min(0.85, current.y + (adj.direction.y || 0) * magnitude));
-                
-                // Only update if change is significant
-                if (Math.abs(newX - current.x) > 0.0005 || Math.abs(newY - current.y) > 0.0005) {
-                  updatedConfig.checkboxes[checkboxIndex].roi = {
-                    ...current,
-                    x: newX,
-                    y: newY,
-                  };
-                  configUpdated = true;
-                }
-              }
-            }
-          });
-          
-          if (configUpdated) {
-            configRef.current = updatedConfig;
-            updateState((prev) => ({
-              ...prev,
-              dynamicAdjustments: prev.dynamicAdjustments + adjustments.length,
-              lastDynamicUpdate: new Date().toLocaleTimeString(),
-            }));
-          }
-        }
-      }
-    } catch (err) {
-      console.error("❌ Dynamic detection error:", err);
-    }
-  }
-}
-
-      // Fallback to standard detection if dynamic fails or not available
-      if (!detectionResults || detectionResults.length === 0) {
-        // Use standard checkbox detection
-        const globalThreshold = computeGlobalThreshold(cv, warped, configRef.current.checkboxes);
-        const analysis = analyzeCheckboxes(cv, warped, configRef.current, globalThreshold, true);
-        detectionResults = analysis.results.map(r => ({
-          ...r,
-          confidence: 75 + Math.random() * 20,
-          dynamicAdjustments: null,
-        }));
+      let cardImageData = null;
+      try {
+        const tempCanvas = document.createElement("canvas");
+        tempCanvas.width = CARD_CONFIG.cardWidth;
+        tempCanvas.height = CARD_CONFIG.cardHeight;
+        cv.imshow(tempCanvas, warped);
+        cardImageData = tempCanvas.toDataURL("image/jpeg", 0.9);
+        tempCanvas.remove();
+      } catch (e) {
+        console.error("❌ Could not create card image:", e);
       }
 
-      // Build debug info
-      const checkboxROIs = configRef.current.checkboxes.map((checkbox) => ({
+      const checkboxROIs = CARD_CONFIG.checkboxes.map((checkbox) => ({
         number: checkbox.number,
         x: checkbox.roi.x,
         y: checkbox.roi.y,
@@ -471,46 +286,33 @@ if (isDynamicMode) {
         height: checkbox.roi.height,
       }));
 
-      // Calculate detection stats
-      const avgConfidence = detectionResults.reduce((sum, r) => sum + (r.confidence || 0), 0) / detectionResults.length;
-      
       const debugData = {
-        checkboxes: detectionResults.map(r => ({
-          number: r.number,
-          title: configRef.current.checkboxes.find(c => c.number === r.number)?.title || `Checkbox ${r.number}`,
-          isChecked: r.isChecked || false,
-          fillPercentage: r.fillPercentage || 0,
-          confidence: r.confidence || 0,
-          roi: r.roi || checkboxROIs.find(cb => cb.number === r.number),
-          adjustments: r.dynamicAdjustments || null,
-        })),
-        warpedImage: tempCanvas.toDataURL("image/jpeg", 0.9),
+        checkboxes: analysis.results,
+        warpedImage: cardImageData,
         checkboxROIs: checkboxROIs,
         imageSize: { width: canvas.width, height: canvas.height },
         warpedSize: { width: CARD_CONFIG.cardWidth, height: CARD_CONFIG.cardHeight },
-        globalThreshold: configRef.current.detection.globalThreshold,
-        baseline: configRef.current.detection.minFillPercentage,
-        margin: configRef.current.detection.margin,
-        detectionResults: detectionResults.map(r => ({
-          ...r,
-          consistency: 75 + Math.random() * 20,
-          adjusted: !!r.dynamicAdjustments,
-        })),
-        isDynamicMode,
-        dynamicAdjustments: dynamicAdjustments || [],
+        globalThreshold,
+        baseline: analysis.baseline,
+        margin: CARD_CONFIG.detection?.margin || 10,
       };
 
       setDebugInfo(debugData);
-      debugInfoRef.current = debugData;
       if (onDebugInfo) onDebugInfo(debugData);
 
-      const checkedBoxes = detectionResults.filter(r => r.isChecked);
-      if (checkedBoxes.length > 0) {
-        console.log("✅ Checked boxes:", checkedBoxes.map(r => r.number));
+      if (analysis.checkedCount > 0) {
+        console.log("✅ Checked boxes:", analysis.checkedBoxes);
         if (onCardScanned) {
-          onCardScanned(checkedBoxes, tempCanvas.toDataURL("image/jpeg", 0.9), debugData);
+          onCardScanned(analysis.checkedBoxes, cardImageData, debugData);
         }
-        toast.success(`Detected ${checkedBoxes.length} option(s)!`);
+        toast.success(`Detected ${analysis.checkedCount} option(s)!`);
+        // Reset for next detection after a short delay
+        setTimeout(() => {
+          processed.current = false;
+          stableFrames.current = 0;
+          lastCornersRef.current = null;
+          updateState({ cardDetected: false });
+        }, 1500);
       } else {
         console.log("⚠️ No checkbox detected");
         toast("No options detected", { icon: "💡" });
@@ -522,8 +324,7 @@ if (isDynamicMode) {
         }, 1000);
       }
 
-      // Cleanup
-      tempCanvas.remove();
+      if (analysis.debugImage) analysis.debugImage.delete();
       warped.delete();
       srcMat.delete();
     } catch (err) {
@@ -534,8 +335,9 @@ if (isDynamicMode) {
       updateState({ cardDetected: false });
       toast.error("Failed to process card");
     }
-  }, [onCardScanned, onDebugInfo, updateState, isDynamicMode]);
+  }, [onCardScanned, onDebugInfo, updateState]);
 
+  // Detect card in frame
   const detectCard = useCallback((ctx, canvas) => {
     try {
       const cv = window.cv;
@@ -549,8 +351,8 @@ if (isDynamicMode) {
         updateState({ cardDetected: stableFrames.current >= CONFIG.STABLE_FRAMES_REQUIRED });
         if (stableFrames.current >= CONFIG.STABLE_FRAMES_REQUIRED && !processed.current) {
           processed.current = true;
-          console.log("🎯 Card steady and detected! Processing with dynamic detection...");
-          processCardWithDynamicDetection(cv, canvas, result);
+          console.log("🎯 Card steady and detected! Processing...");
+          processCard(cv, canvas, result);
         }
       } else {
         updateState({ matches: result?.matches || 0, cardFound: false, cardDetected: false });
@@ -563,7 +365,7 @@ if (isDynamicMode) {
       console.error("Detection error:", err);
       processed.current = false;
     }
-  }, [isCornerStable, processCardWithDynamicDetection, updateState]);
+  }, [isCornerStable, processCard, updateState]);
 
   // Main render loop
   useEffect(() => {
@@ -575,9 +377,6 @@ if (isDynamicMode) {
 
     const ctx = canvas.getContext("2d", { willReadFrequently: true });
     const displayCtx = displayCanvas.getContext("2d", { willReadFrequently: true });
-
-    // Use slower frame interval in dynamic mode
-    const frameInterval = isDynamicMode ? CONFIG.DYNAMIC_FRAME_INTERVAL : CONFIG.FRAME_INTERVAL;
 
     const renderFrame = () => {
       if (!cameraOn || !video) {
@@ -607,12 +406,12 @@ if (isDynamicMode) {
         }
         ctx.drawImage(displayCanvas, 0, 0);
         const now = Date.now();
-        if (now - lastDetection.current >= frameInterval && cvReady && !processed.current) {
+        if (now - lastDetection.current >= CONFIG.FRAME_INTERVAL && cvReady && !processed.current) {
           lastDetection.current = now;
           detectCard(ctx, canvas);
         }
 
-        // Draw overlay with dynamic mode indicator
+        // Draw overlay
         const boxW = Math.min(vw * 0.8, 400);
         const boxH = boxW * 1.4;
         const x = (vw - boxW) / 2;
@@ -621,20 +420,9 @@ if (isDynamicMode) {
         
         displayCtx.strokeStyle = color;
         displayCtx.lineWidth = cardDetected ? 4 : 3;
-        displayCtx.setLineDash(isDynamicMode ? [15, 8, 5, 8] : [10, 10]); // Dynamic mode has different dash pattern
+        displayCtx.setLineDash([10, 10]);
         displayCtx.strokeRect(x, y, boxW, boxH);
         displayCtx.setLineDash([]);
-
-        // Dynamic mode badge
-        if (isDynamicMode) {
-          displayCtx.fillStyle = "rgba(0,0,0,0.6)";
-          displayCtx.roundRect(vw - 100, 10, 90, 28, 14);
-          displayCtx.fill();
-          displayCtx.fillStyle = "#facc15";
-          displayCtx.font = "12px sans-serif";
-          displayCtx.textAlign = "center";
-          displayCtx.fillText("🧠 Dynamic", vw - 55, 30);
-        }
 
         const cornerSize = 30;
         displayCtx.strokeStyle = cardDetected ? "#22c55e" : cardFound ? "#facc15" : "#ffffff80";
@@ -651,8 +439,7 @@ if (isDynamicMode) {
           displayCtx.lineTo(x2, y2);
           displayCtx.stroke();
         });
-        
-        // Status text
+
         let statusText = "";
         let statusColor = "";
         if (cardDetected) {
@@ -670,14 +457,6 @@ if (isDynamicMode) {
         displayCtx.textAlign = "center";
         displayCtx.fillText(statusText, vw / 2, y - 20);
 
-        // Dynamic adjustment count
-        if (isDynamicMode && dynamicAdjustments > 0) {
-          displayCtx.fillStyle = "rgba(255,255,255,0.4)";
-          displayCtx.font = "10px sans-serif";
-          displayCtx.textAlign = "right";
-          displayCtx.fillText(`⚡ ${dynamicAdjustments} adjustments`, vw - 10, vh - 15);
-        }
-
         animationRef.current = requestAnimationFrame(renderFrame);
       } catch (err) {
         console.error("Render error:", err);
@@ -688,8 +467,9 @@ if (isDynamicMode) {
     return () => {
       if (animationRef.current) cancelAnimationFrame(animationRef.current);
     };
-  }, [cameraOn, cameraError, cvReady, isLoading, facingMode, detectCard, cardDetected, cardFound, matches, isDynamicMode, dynamicAdjustments]);
+  }, [cameraOn, cameraError, cvReady, isLoading, facingMode, detectCard, cardDetected, cardFound, matches]);
 
+  // UI render
   return (
     <div className="fixed inset-0 bg-black overflow-hidden">
       <video ref={videoRef} playsInline autoPlay muted className="hidden" />
@@ -758,27 +538,11 @@ if (isDynamicMode) {
           <div className="absolute top-0 left-0 right-0 flex items-center justify-between px-4 pt-4 z-20">
             <div>
               <h1 className="text-white text-lg font-semibold tracking-wide drop-shadow-lg">Scan Your Card</h1>
-              <p className="text-gray-300 text-xs mt-1 opacity-80 flex items-center gap-2">
+              <p className="text-gray-300 text-xs mt-1 opacity-80">
                 {qrId ? `QR: ${qrId}` : "Place card in frame"}
-                {isDynamicMode && (
-                  <span className="text-yellow-400 text-[10px] bg-yellow-400/20 px-2 py-0.5 rounded-full">
-                    🧠 Dynamic
-                  </span>
-                )}
               </p>
             </div>
             <div className="flex gap-2">
-              <button
-                onClick={toggleDynamicMode}
-                className={`w-11 h-11 rounded-full flex items-center justify-center backdrop-blur-md transition-all border border-white/10 ${
-                  isDynamicMode 
-                    ? "bg-yellow-400/30 text-yellow-400 hover:bg-yellow-400/40" 
-                    : "bg-white/20 text-white hover:bg-white/30"
-                }`}
-                title={isDynamicMode ? "Switch to static mode" : "Switch to dynamic mode"}
-              >
-                <Icon name="dynamic" className="w-5 h-5" />
-              </button>
               <button
                 onClick={flipCamera}
                 disabled={isFlipping}
@@ -816,9 +580,7 @@ if (isDynamicMode) {
                   : "none",
               }}
               transition={{ duration: 0.3 }}
-              className={`w-full max-w-[340px] aspect-[3/5] rounded-2xl border-[3px] border-dashed ${
-                isDynamicMode ? "border-yellow-400/30" : ""
-              }`}
+              className="w-full max-w-[340px] aspect-[3/5] rounded-2xl border-[3px] border-dashed"
             />
           </div>
           <div className="absolute bottom-10 left-0 right-0 flex flex-col items-center gap-3 px-6 z-20">
@@ -836,23 +598,17 @@ if (isDynamicMode) {
               {cardDetected
                 ? "✅ Card detected! Processing..."
                 : cardFound
-                ? `Hold steady... (${matches} matches) ${isDynamicMode ? "🧠" : ""}`
+                ? `Hold steady... (${matches} matches)`
                 : `Position card in frame (${matches} matches)`}
             </motion.div>
             {cardFound && !cardDetected && (
               <div className="w-48 h-1 bg-white/20 rounded-full overflow-hidden">
                 <motion.div
-                  className={`h-full ${isDynamicMode ? "bg-yellow-400" : "bg-yellow-400"} rounded-full`}
+                  className="h-full bg-yellow-400 rounded-full"
                   initial={{ width: "0%" }}
                   animate={{ width: `${Math.min((stableFrames.current / CONFIG.STABLE_FRAMES_REQUIRED) * 100, 100)}%` }}
                   transition={{ duration: 0.3 }}
                 />
-              </div>
-            )}
-            {isDynamicMode && dynamicAdjustments > 0 && (
-              <div className="text-[10px] text-yellow-400/60 bg-black/40 px-3 py-1 rounded-full">
-                ⚡ {dynamicAdjustments} adjustments made
-                {lastDynamicUpdate && ` • ${lastDynamicUpdate}`}
               </div>
             )}
           </div>
@@ -888,27 +644,13 @@ if (isDynamicMode) {
         <DebugOverlay
           debugInfo={debugInfo}
           onClose={() => setShowDebugOverlay(false)}
-          onUpdateConfig={handleConfigUpdate}
-          onDynamicAdjust={handleDynamicAdjust}
-          isDynamicMode={isDynamicMode}
+          onUpdateConfig={() => {}}
+          onDynamicAdjust={() => {}}
+          isDynamicMode={false}
         />
       )}
     </div>
   );
 };
-
-// Polyfill for roundRect if not available
-if (!CanvasRenderingContext2D.prototype.roundRect) {
-  CanvasRenderingContext2D.prototype.roundRect = function(x, y, w, h, r) {
-    if (r > w/2) r = w/2;
-    if (r > h/2) r = h/2;
-    this.moveTo(x + r, y);
-    this.arcTo(x + w, y, x + w, y + h, r);
-    this.arcTo(x + w, y + h, x, y + h, r);
-    this.arcTo(x, y + h, x, y, r);
-    this.arcTo(x, y, x + w, y, r);
-    return this;
-  };
-}
 
 export default CardScanner;
