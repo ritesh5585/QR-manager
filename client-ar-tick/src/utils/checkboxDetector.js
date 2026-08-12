@@ -1,369 +1,375 @@
-// utils/checkboxDetector.js - COMPLETE FIXED VERSION
+// utils/checkboxDetector.js - Reference-style detector (proven working)
 
 /**
- * Computes global threshold for the warped card
+ * ============================================================
+ * REFERENCE-STYLE CHECKBOX DETECTOR
+ *
+ * Uses the proven approach from detectSquare.js:
+ * 1. Fixed pixel coordinates on 600x1000 warped card
+ * 2. Single global threshold from the entire checkbox band
+ * 3. Baseline subtraction (empty box = minimum fill)
+ * 4. Margin threshold for checking
+ * ============================================================
  */
-export function computeGlobalThreshold(cv, warped, checkboxes) {
-  try {
-    const gray = new cv.Mat();
-    if (warped.channels() > 1) {
-      cv.cvtColor(warped, gray, cv.COLOR_RGBA2GRAY);
-    } else {
-      warped.copyTo(gray);
-    }
-    const threshold = cv.threshold(gray, new cv.Mat(), 0, 255, cv.THRESH_BINARY + cv.THRESH_OTSU);
-    gray.delete();
-    return threshold;
-  } catch (error) {
-    console.error("Threshold computation error:", error);
-    return 128;
-  }
-}
+
+// Fixed checkbox positions on 600x1000 warped card
+const CHECKBOX_POSITIONS = {
+  1: { x: 63, y: 460, size: 39 }, // 10.5% of 600 = 63, 46% of 1000 = 460
+  2: { x: 63, y: 610, size: 39 }, // 10.5% of 600 = 63, 61% of 1000 = 610
+  3: { x: 63, y: 760, size: 38 }, // 10.5% of 600 = 63, 76% of 1000 = 760
+};
+
+const DETECTION_CONFIG = {
+  cardWidth: 600,
+  cardHeight: 1000,
+  margin: 12, // Percentage points above baseline to count as checked
+};
 
 /**
- * Enhanced tick detection with accurate confidence
+ * Compute ONE global threshold from the entire ROI band
+ * containing all checkboxes - gives stable, consistent threshold
  */
-function detectTick(cv, roi, globalThreshold) {
+function calculateGlobalThreshold(cv, warped) {
   try {
-    // Ensure ROI is valid
-    if (!roi || roi.rows < 5 || roi.cols < 5) {
-      return { hasTick: false, confidence: 0 };
+    if (!warped || warped.empty()) {
+      console.warn("⚠️ Invalid warped card for threshold calculation");
+      return 120;
     }
 
+    const boxes = Object.values(CHECKBOX_POSITIONS);
+
+    const minX = Math.min(...boxes.map((b) => b.x));
+    const minY = Math.min(...boxes.map((b) => b.y));
+    const maxX = Math.max(...boxes.map((b) => b.x + b.size));
+    const maxY = Math.max(...boxes.map((b) => b.y + b.size));
+
+    // Ensure we have valid dimensions
+    if (minX >= maxX || minY >= maxY) {
+      console.warn("⚠️ Invalid checkbox band dimensions");
+      return 120;
+    }
+
+    const band = warped.roi(new cv.Rect(minX, minY, maxX - minX, maxY - minY));
     const gray = new cv.Mat();
-    if (roi.channels() > 1) {
-      cv.cvtColor(roi, gray, cv.COLOR_RGBA2GRAY);
-    } else {
-      roi.copyTo(gray);
-    }
+    cv.cvtColor(band, gray, cv.COLOR_RGBA2GRAY);
 
-    // Use adaptive threshold for tick detection
-    const binary = new cv.Mat();
-    cv.adaptiveThreshold(gray, binary, 255, cv.ADAPTIVE_THRESH_GAUSSIAN_C, cv.THRESH_BINARY_INV, 15, 3);
-
-    // Morphological operations to enhance thin lines
-    const kernel = cv.getStructuringElement(cv.MORPH_CROSS, new cv.Size(2, 2));
-    const enhanced = new cv.Mat();
-    cv.morphologyEx(binary, enhanced, cv.MORPH_DILATE, kernel);
-
-    const contours = new cv.MatVector();
-    const hierarchy = new cv.Mat();
-    cv.findContours(enhanced, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
-
-    let bestConfidence = 0;
-    const roiArea = roi.rows * roi.cols;
-
-    for (let i = 0; i < contours.size(); i++) {
-      const contour = contours.get(i);
-      const area = cv.contourArea(contour);
-      
-      // Area should be 0.5% - 25% of ROI
-      const areaRatio = area / roiArea;
-      if (areaRatio < 0.005 || areaRatio > 0.25) {
-        contour.delete();
-        continue;
-      }
-
-      const rect = cv.boundingRect(contour);
-      const aspectRatio = rect.width / rect.height;
-      
-      // Tick marks are usually wider than tall
-      if (aspectRatio < 0.4 || aspectRatio > 4.0) {
-        contour.delete();
-        continue;
-      }
-
-      // Approximate contour shape
-      const peri = cv.arcLength(contour, true);
-      const approx = new cv.Mat();
-      cv.approxPolyDP(contour, approx, 0.025 * peri, true);
-      const vertices = approx.rows;
-
-      // Tick marks have 4-12 vertices
-      if (vertices >= 4 && vertices <= 12) {
-        const points = [];
-        for (let j = 0; j < vertices; j++) {
-          points.push({
-            x: approx.data32S[j * 2],
-            y: approx.data32S[j * 2 + 1]
-          });
-        }
-
-        // Check for V-shape pattern
-        let sharpAngles = 0;
-        let totalAngle = 0;
-
-        for (let j = 1; j < points.length - 1; j++) {
-          const p1 = points[j - 1];
-          const p2 = points[j];
-          const p3 = points[j + 1];
-          
-          const v1 = { x: p1.x - p2.x, y: p1.y - p2.y };
-          const v2 = { x: p3.x - p2.x, y: p3.y - p2.y };
-          
-          const dot = v1.x * v2.x + v1.y * v2.y;
-          const mag1 = Math.sqrt(v1.x * v1.x + v1.y * v1.y);
-          const mag2 = Math.sqrt(v2.x * v2.x + v2.y * v2.y);
-          
-          if (mag1 > 2 && mag2 > 2) {
-            const angle = Math.acos(Math.max(-1, Math.min(1, dot / (mag1 * mag2))));
-            totalAngle += angle;
-            
-            // Sharp angle = V-shape (0.3 - 1.5 radians)
-            if (angle > 0.3 && angle < 1.5) {
-              sharpAngles++;
-            }
-          }
-        }
-
-        // Calculate bounding box coverage
-        const bboxArea = rect.width * rect.height;
-        const coverage = bboxArea > 0 ? area / bboxArea : 0;
-
-        // CRITICAL: Proper confidence calculation (0-100)
-        let confidence = 0;
-        if (sharpAngles >= 2 && coverage > 0.25 && coverage < 0.85) {
-          confidence = 50; // Base confidence for V-shape
-          confidence += (coverage * 25); // Coverage factor (max +25)
-          confidence += (vertices / 12) * 15; // Vertex factor (max +15)
-          confidence += (sharpAngles / 4) * 10; // Sharp angle factor (max +10)
-          confidence = Math.min(95, confidence); // Cap at 95% (never 100% for safety)
-        }
-
-        if (confidence > bestConfidence) {
-          bestConfidence = confidence;
-        }
-      }
-      approx.delete();
-      contour.delete();
-    }
+    const thresh = new cv.Mat();
+    const t = cv.threshold(
+      gray,
+      thresh,
+      0,
+      255,
+      cv.THRESH_BINARY_INV + cv.THRESH_OTSU,
+    );
 
     // Cleanup
     gray.delete();
-    binary.delete();
-    enhanced.delete();
-    kernel.delete();
-    contours.delete();
-    hierarchy.delete();
+    thresh.delete();
+    band.delete();
 
-    return {
-      hasTick: bestConfidence > 45,
-      confidence: Math.round(bestConfidence * 10) / 10
-    };
+    // Ensure threshold is in valid range
+    const validThreshold = Math.max(80, Math.min(180, t));
+    console.log(`🎚️ Global threshold: ${validThreshold} (raw: ${t})`);
+
+    return validThreshold;
   } catch (error) {
-    console.error("Tick detection error:", error);
-    return { hasTick: false, confidence: 0 };
+    console.error("❌ Global threshold calculation error:", error);
+    return 120; // Fallback threshold
   }
 }
 
 /**
- * Complete checkbox analysis with deterministic output
+ * Measure a single checkbox using the global threshold
  */
-export function analyzeCheckboxes(cv, warped, config, globalThreshold, debug = false) {
+function measureSingleCheckbox(cv, warped, position, globalThresh) {
   try {
-    const imgWidth = warped.cols;
-    const imgHeight = warped.rows;
+    const { x, y, size } = position;
 
-    // Convert to grayscale
+    // Validate position
+    if (x < 0 || y < 0 || x + size > warped.cols || y + size > warped.rows) {
+      console.warn(`⚠️ Checkbox position out of bounds: (${x}, ${y})`);
+      return 0;
+    }
+
+    const roi = warped.roi(new cv.Rect(x, y, size, size));
     const gray = new cv.Mat();
-    if (warped.channels() > 1) {
-      cv.cvtColor(warped, gray, cv.COLOR_RGBA2GRAY);
-    } else {
-      warped.copyTo(gray);
-    }
+    cv.cvtColor(roi, gray, cv.COLOR_RGBA2GRAY);
 
-    // First pass: Extract all ROIs
-    const allRoiData = [];
-    for (const checkbox of config.checkboxes) {
-      // CRITICAL FIX: Convert normalized to pixel coordinates
-      const roi = checkbox.roi;
-      const x = Math.round(roi.x * imgWidth);
-      const y = Math.round(roi.y * imgHeight);
-      const w = Math.round(roi.width * imgWidth);
-      const h = Math.round(roi.height * imgHeight);
+    const bin = new cv.Mat();
+    cv.threshold(gray, bin, globalThresh, 255, cv.THRESH_BINARY_INV);
 
-      // Ensure ROI is within bounds
-      const safeX = Math.max(0, Math.min(x, imgWidth - w));
-      const safeY = Math.max(0, Math.min(y, imgHeight - h));
-      const safeW = Math.min(w, imgWidth - safeX);
-      const safeH = Math.min(h, imgHeight - safeY);
+    const totalPixels = size * size;
+    const darkPixels = cv.countNonZero(bin);
+    const fillPercentage = (darkPixels / totalPixels) * 100;
 
-      const roiMat = gray.roi(new cv.Rect(safeX, safeY, safeW, safeH));
-      const data = roiMat.data;
-      
-      // Calculate fill percentage with threshold
-      let darkPixels = 0;
-      const total = data.length;
-      const localThreshold = globalThreshold * 0.85; // Slightly lower for tick detection
-      
-      for (let i = 0; i < data.length; i++) {
-        if (data[i] < localThreshold) darkPixels++;
-      }
-
-      const fillPercentage = (darkPixels / total) * 100;
-      
-      allRoiData.push({
-        checkbox,
-        roiMat,
-        x: safeX,
-        y: safeY,
-        w: safeW,
-        h: safeH,
-        fillPercentage,
-        darkPixels,
-        total,
-      });
-    }
-
-    // Calculate baseline (average fill of all ROIs)
-    const avgFill = allRoiData.reduce((sum, d) => sum + d.fillPercentage, 0) / allRoiData.length;
-    
-    // Calculate standard deviation
-    const variance = allRoiData.reduce((sum, d) => sum + Math.pow(d.fillPercentage - avgFill, 2), 0) / allRoiData.length;
-    const stdDev = Math.sqrt(variance);
-
-    const results = [];
-
-    // Second pass: Analyze each ROI
-    for (let i = 0; i < allRoiData.length; i++) {
-      const data = allRoiData[i];
-      const { checkbox, roiMat, x, y, w, h, fillPercentage } = data;
-
-      // Detect tick in ROI
-      const tickResult = detectTick(cv, roiMat, globalThreshold);
-      
-      // Fill confidence
-      const minFill = config.detection?.minFillPercentage || 20;
-      const isFilled = fillPercentage >= minFill;
-      const fillConfidence = Math.min(90, (fillPercentage / 35) * 100);
-
-      // DECISION LOGIC
-      let isChecked = false;
-      let confidence = 0;
-      let detectionMethod = 'none';
-
-      // 1. PRIMARY: Tick detection
-      if (tickResult.hasTick && tickResult.confidence > 45) {
-        isChecked = true;
-        confidence = tickResult.confidence;
-        detectionMethod = 'tick';
-      }
-      
-      // 2. SECONDARY: Fill detection (significantly above baseline)
-      if (!isChecked && fillPercentage > avgFill + stdDev * 1.5 && fillPercentage > 18) {
-        isChecked = true;
-        confidence = Math.max(confidence, Math.min(80, fillConfidence));
-        detectionMethod = 'fill';
-      }
-
-      // 3. TERTIARY: Comparative with neighbors
-      if (!isChecked) {
-        const neighborFills = allRoiData
-          .filter((d, idx) => idx !== i)
-          .map(d => d.fillPercentage);
-        const avgNeighborFill = neighborFills.reduce((a, b) => a + b, 0) / neighborFills.length;
-        
-        if (fillPercentage > avgNeighborFill + 12 && fillPercentage > 15) {
-          isChecked = true;
-          confidence = Math.max(confidence, 55);
-          detectionMethod = 'comparative';
-        }
-      }
-
-      // CRITICAL: Cap confidence at 95% (never 100% for safety)
-      confidence = Math.min(95, confidence);
-
-      results.push({
-        number: checkbox.number,
-        title: checkbox.title,
-        roi: { x, y, width: w, height: h },
-        fillPercentage: Math.round(fillPercentage * 10) / 10,
-        isChecked: isChecked,
-        confidence: Math.round(confidence * 10) / 10,
-        detectionMethod: detectionMethod,
-        tickConfidence: tickResult.confidence || 0,
-        fillConfidence: Math.round(fillConfidence * 10) / 10,
-        baselineFill: Math.round(avgFill * 10) / 10,
-      });
-
-      roiMat.delete();
-    }
-
+    // Cleanup
+    roi.delete();
     gray.delete();
+    bin.delete();
 
-    // ============================================================
-    // CRITICAL: POST-PROCESSING - ENSURE ONLY ONE CHECKBOX
-    // ============================================================
-    const checkedCandidates = results.filter(r => r.isChecked);
-    let finalCheckedBoxes = [];
-    
-    if (checkedCandidates.length === 0) {
-      // No checkbox detected
-      console.log("ℹ️ No checkbox detected");
-    } else if (checkedCandidates.length === 1) {
-      // Perfect - exactly one detected
-      finalCheckedBoxes = [checkedCandidates[0].number];
-      console.log(`✅ Single checkbox detected: #${finalCheckedBoxes[0]}`);
-    } else {
-      // Multiple detected - pick the one with HIGHEST CONFIDENCE
-      const best = checkedCandidates.reduce((a, b) => 
-        (a.confidence || 0) > (b.confidence || 0) ? a : b
-      );
-      
-      // Only keep the best one
-      finalCheckedBoxes = [best.number];
-      
-      // Mark others as unchecked
-      results.forEach(r => {
-        if (r.number !== best.number) {
-          r.isChecked = false;
-          r.confidence = 0;
-          r.detectionMethod = 'none';
-        }
-      });
-      
-      console.log(`⚠️ Multiple detected, selected best: #${finalCheckedBoxes[0]} (${best.confidence}%)`);
+    return fillPercentage;
+  } catch (error) {
+    console.error("❌ Checkbox measurement error:", error);
+    return 0;
+  }
+}
+
+/**
+ * MAIN ANALYSIS FUNCTION - Uses reference-style detection
+ */
+export function analyzeCheckboxes(
+  cv,
+  warpedCard,
+  config,
+  globalThreshold = null,
+  debug = false,
+) {
+  try {
+    // --- 1. Validate inputs ---
+    if (!warpedCard || warpedCard.empty()) {
+      console.error("❌ Invalid warped card");
+      return {
+        results: [],
+        checkedBoxes: [],
+        checkedCount: 0,
+        status: "NO_CARD",
+        message: "No warped card available",
+        debugImage: null,
+        baseline: 0,
+        globalThreshold: 120,
+        margin: DETECTION_CONFIG.margin,
+      };
     }
 
-    // Final update
-    results.forEach(r => {
-      r.isChecked = finalCheckedBoxes.includes(r.number);
-      if (!r.isChecked) {
-        r.confidence = 0;
-        r.detectionMethod = 'none';
-      }
+    // --- 2. Get checkbox titles from config ---
+    const checkboxTitles = {};
+    if (config?.checkboxes) {
+      config.checkboxes.forEach((cb) => {
+        checkboxTitles[cb.number] = cb.title || `Option ${cb.number}`;
+      });
+    }
+
+    // --- 3. Compute global threshold ---
+    const globalThresh =
+      globalThreshold || calculateGlobalThreshold(cv, warpedCard);
+    console.log(`🎚️ Using global threshold: ${globalThresh}`);
+
+    // --- 4. Measure each checkbox ---
+    const boxes = Object.entries(CHECKBOX_POSITIONS).map(([number, pos]) => ({
+      number: parseInt(number),
+      position: pos,
+      fill: measureSingleCheckbox(cv, warpedCard, pos, globalThresh),
+    }));
+
+    // --- 5. Determine baseline (minimum fill - represents "empty") ---
+    const baseline = Math.min(...boxes.map((b) => b.fill));
+    console.log(`📊 Baseline (empty): ${baseline.toFixed(1)}%`);
+
+    // --- 6. Determine which boxes are checked ---
+    const MARGIN = DETECTION_CONFIG.margin;
+    const results = boxes.map(({ number, position, fill }) => {
+      const isChecked = fill - baseline >= MARGIN;
+      const title = checkboxTitles[number] || `Option ${number}`;
+
+      return {
+        number,
+        title,
+        displayName: title,
+        fillPercentage: Math.round(fill * 10) / 10,
+        isChecked,
+        // Debug info
+        aboveBaseline: Math.round((fill - baseline) * 10) / 10,
+        baseline: Math.round(baseline * 10) / 10,
+        margin: MARGIN,
+      };
     });
 
-    console.log(`📊 FINAL: ${finalCheckedBoxes.length} checkbox(es): [${finalCheckedBoxes.join(', ')}]`);
-    console.log('📈 Details:', results.map(r => ({
-      number: r.number,
-      isChecked: r.isChecked,
-      fill: r.fillPercentage,
-      method: r.detectionMethod,
-      confidence: r.confidence,
-      tickConf: r.tickConfidence,
-    })));
+    // --- 7. Summary ---
+    const checkedBoxes = results
+      .filter((r) => r.isChecked)
+      .map((r) => r.number);
+    const checkedCount = checkedBoxes.length;
+
+    console.log("📊 Checkbox Analysis:", {
+      checkedCount,
+      checkedBoxes,
+      baseline: baseline.toFixed(1),
+      results: results.map((r) => ({
+        box: r.number,
+        fill: `${r.fillPercentage}%`,
+        aboveBaseline: `${r.aboveBaseline}%`,
+        checked: r.isChecked,
+      })),
+    });
+
+    // --- 8. Debug visualization ---
+    let debugImage = null;
+    if (debug) {
+      debugImage = drawDebugOverlay(
+        cv,
+        warpedCard,
+        results,
+        globalThresh,
+        baseline,
+      );
+    }
 
     return {
       results,
-      checkedBoxes: finalCheckedBoxes,
-      checkedCount: finalCheckedBoxes.length,
-      baseline: Math.round(avgFill * 10) / 10,
-      debugImage: null,
+      checkedBoxes,
+      checkedCount,
+      status: checkedCount > 0 ? "TICK_FOUND" : "NO_TICK",
+      message:
+        checkedCount > 0
+          ? `${checkedCount} checkbox(es) marked`
+          : "No marks detected",
+      baseline: Math.round(baseline * 10) / 10,
+      globalThreshold: globalThresh,
+      margin: MARGIN,
+      debugImage,
     };
   } catch (error) {
-    console.error("Checkbox analysis error:", error);
+    console.error("❌ analyzeCheckboxes error:", error);
     return {
       results: [],
       checkedBoxes: [],
       checkedCount: 0,
-      baseline: 0,
+      status: "ERROR",
+      message: `Detection error: ${error.message}`,
       debugImage: null,
+      baseline: 0,
+      globalThreshold: 120,
+      margin: DETECTION_CONFIG.margin,
     };
   }
 }
 
-export default {
-  computeGlobalThreshold,
-  analyzeCheckboxes,
-};
+/**
+ * Draw debug overlay showing detection results
+ */
+function drawDebugOverlay(cv, warpedCard, results, globalThresh, baseline) {
+  try {
+    if (!warpedCard || warpedCard.empty()) {
+      return null;
+    }
+
+    const debugImage = new cv.Mat();
+    warpedCard.copyTo(debugImage);
+
+    for (const result of results) {
+      const pos = CHECKBOX_POSITIONS[result.number];
+      if (!pos) continue;
+
+      const { x, y, size } = pos;
+
+      // Color: green if checked, red if empty
+      const color = result.isChecked
+        ? new cv.Scalar(0, 255, 0, 255)
+        : new cv.Scalar(255, 0, 0, 255);
+
+      // Draw checkbox ROI
+      cv.rectangle(
+        debugImage,
+        new cv.Point(x, y),
+        new cv.Point(x + size, y + size),
+        color,
+        2,
+      );
+
+      // Draw label
+      const status = result.isChecked ? "✓" : "□";
+      const label = `#${result.number} ${status} ${result.fillPercentage}%`;
+      cv.putText(
+        debugImage,
+        label,
+        new cv.Point(x + size + 5, y + size / 2 + 5),
+        cv.FONT_HERSHEY_SIMPLEX,
+        0.5,
+        color,
+        1,
+      );
+    }
+
+    // Add global info
+    const infoText = `Threshold: ${globalThresh} | Baseline: ${baseline.toFixed(1)}% | Margin: ${DETECTION_CONFIG.margin}%`;
+    cv.putText(
+      debugImage,
+      infoText,
+      new cv.Point(10, 30),
+      cv.FONT_HERSHEY_SIMPLEX,
+      0.6,
+      new cv.Scalar(255, 255, 0, 255),
+      1,
+    );
+
+    return debugImage;
+  } catch (error) {
+    console.error("❌ Debug overlay error:", error);
+    return null;
+  }
+}
+
+/**
+ * COMPUTE GLOBAL THRESHOLD - Public wrapper
+ * Kept for backward compatibility with existing code
+ */
+export function computeGlobalThreshold(cv, warped, checkboxConfigs = null) {
+  return calculateGlobalThreshold(cv, warped);
+}
+
+/**
+ * LEGACY: detectCheckbox - kept for backward compatibility
+ */
+export function detectCheckbox(cv, checkboxMat, globalThresh = 120) {
+  try {
+    if (!checkboxMat || checkboxMat.empty()) {
+      return {
+        isChecked: false,
+        markPercentage: 0,
+        confidence: 0,
+        reason: "INVALID_ROI",
+      };
+    }
+
+    // Quick and simple detection for legacy calls
+    const gray = new cv.Mat();
+    if (checkboxMat.channels() > 1) {
+      cv.cvtColor(checkboxMat, gray, cv.COLOR_RGBA2GRAY);
+    } else {
+      checkboxMat.copyTo(gray);
+    }
+
+    const bin = new cv.Mat();
+    cv.threshold(gray, bin, globalThresh, 255, cv.THRESH_BINARY_INV);
+
+    const totalPixels = gray.rows * gray.cols;
+    const darkPixels = cv.countNonZero(bin);
+    const markPercentage = (darkPixels / totalPixels) * 100;
+
+    gray.delete();
+    bin.delete();
+
+    return {
+      isChecked: markPercentage > 15,
+      markPercentage: Math.round(markPercentage * 10) / 10,
+      confidence: Math.min(90, markPercentage * 2),
+      reason: markPercentage > 15 ? "MARK_DETECTED" : "NO_MARK",
+    };
+  } catch (error) {
+    console.error("❌ Legacy detectCheckbox error:", error);
+    return {
+      isChecked: false,
+      markPercentage: 0,
+      confidence: 0,
+      reason: "DETECTION_ERROR",
+    };
+  }
+}
+
+/**
+ * LEGACY: detectCheckboxes - kept for backward compatibility
+ */
+export function detectCheckboxes(cv, warpedCard) {
+  const result = analyzeCheckboxes(cv, warpedCard);
+  return result.results || [];
+}

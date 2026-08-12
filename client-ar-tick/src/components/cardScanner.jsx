@@ -1,4 +1,4 @@
-// CardScanner.js - Working version with your detection pipeline
+// CardScanner.js - Fixed version with proper config handling
 
 import React, { useEffect, useRef, useState, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
@@ -66,6 +66,13 @@ const CONFIG = {
   CAMERA_TIMEOUT: 10000,
 };
 
+// Fixed checkbox positions (used for debug overlay)
+const CHECKBOX_POSITIONS = {
+  1: { x: 63, y: 460, size: 39 },
+  2: { x: 63, y: 610, size: 39 },
+  3: { x: 63, y: 760, size: 38 },
+};
+
 const CardScanner = ({ onCardScanned, onDebugInfo, qrId, showDebug = true }) => {
   // Refs
   const videoRef = useRef(null);
@@ -78,7 +85,6 @@ const CardScanner = ({ onCardScanned, onDebugInfo, qrId, showDebug = true }) => 
   const lastCornersRef = useRef(null);
   const lastDetection = useRef(0);
   const processed = useRef(false);
-  const debugInfoRef = useRef(null);
 
   // State
   const [state, setState] = useState({
@@ -260,7 +266,7 @@ const CardScanner = ({ onCardScanned, onDebugInfo, qrId, showDebug = true }) => 
 
       console.log("✅ Card warped successfully");
 
-      const globalThreshold = computeGlobalThreshold(cv, warped, CARD_CONFIG.checkboxes);
+      const globalThreshold = computeGlobalThreshold(cv, warped);
       console.log("🎚️ Global threshold:", globalThreshold);
 
       const analysis = analyzeCheckboxes(cv, warped, CARD_CONFIG, globalThreshold, true);
@@ -278,12 +284,13 @@ const CardScanner = ({ onCardScanned, onDebugInfo, qrId, showDebug = true }) => 
         console.error("❌ Could not create card image:", e);
       }
 
-      const checkboxROIs = CARD_CONFIG.checkboxes.map((checkbox) => ({
-        number: checkbox.number,
-        x: checkbox.roi.x,
-        y: checkbox.roi.y,
-        width: checkbox.roi.width,
-        height: checkbox.roi.height,
+      // Build checkbox ROIs for debug - use fixed positions
+      const checkboxROIs = Object.entries(CHECKBOX_POSITIONS).map(([number, pos]) => ({
+        number: parseInt(number),
+        x: pos.x / CARD_CONFIG.cardWidth,
+        y: pos.y / CARD_CONFIG.cardHeight,
+        width: pos.size / CARD_CONFIG.cardWidth,
+        height: pos.size / CARD_CONFIG.cardHeight,
       }));
 
       const debugData = {
@@ -294,7 +301,7 @@ const CardScanner = ({ onCardScanned, onDebugInfo, qrId, showDebug = true }) => 
         warpedSize: { width: CARD_CONFIG.cardWidth, height: CARD_CONFIG.cardHeight },
         globalThreshold,
         baseline: analysis.baseline,
-        margin: CARD_CONFIG.detection?.margin || 10,
+        margin: analysis.margin || CARD_CONFIG.detection?.margin || 12,
       };
 
       setDebugInfo(debugData);
@@ -303,7 +310,9 @@ const CardScanner = ({ onCardScanned, onDebugInfo, qrId, showDebug = true }) => 
       if (analysis.checkedCount > 0) {
         console.log("✅ Checked boxes:", analysis.checkedBoxes);
         if (onCardScanned) {
-          onCardScanned(analysis.checkedBoxes, cardImageData, debugData);
+          // Pass the full results of checked boxes
+          const checkedResults = analysis.results.filter((r) => r.isChecked);
+          onCardScanned(checkedResults, cardImageData, debugData);
         }
         toast.success(`Detected ${analysis.checkedCount} option(s)!`);
         // Reset for next detection after a short delay
@@ -333,7 +342,7 @@ const CardScanner = ({ onCardScanned, onDebugInfo, qrId, showDebug = true }) => 
       stableFrames.current = 0;
       lastCornersRef.current = null;
       updateState({ cardDetected: false });
-      toast.error("Failed to process card");
+      toast.error("Failed to process card: " + err.message);
     }
   }, [onCardScanned, onDebugInfo, updateState]);
 

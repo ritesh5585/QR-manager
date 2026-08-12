@@ -70,10 +70,16 @@ const DocumentScanner = () => {
       }
 
       // ✅ Check 3: Prepare payload
+      const OPTION_FILE_TYPES = {
+        1: "mp4",  // I Eat While Distracted
+        2: "mp4",  // I Eat In A Hurry
+        3: "jpg",  // I Eat Mindfully
+      };
+
       const payload = checkedBoxes.map((box) => ({
         number: box.number,
         title: box.title,
-        fileType: box.fileType,
+        fileType: OPTION_FILE_TYPES[box.number] || "mp4",
         fillPercentage: box.fillPercentage || 0,
         confidence: box.confidence || 0,
       }));

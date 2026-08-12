@@ -64,9 +64,28 @@ const Result = () => {
     );
   }
 
-  const assignedDetails = qrDetails?.assignedDetails || [];
-  const sortedDetails = [...assignedDetails].sort(
-    (a, b) => a.number - b.number,
+  const assignedDetails = Array.isArray(qrDetails?.assignedDetails)
+    ? qrDetails.assignedDetails
+    : [];
+  
+  // Validate and filter out any items without a valid number
+  const validDetails = assignedDetails.filter(
+    (detail) => detail && typeof detail.number === "number" && detail.number > 0
+  );
+
+  // Debug logging if there are invalid details
+  if (assignedDetails.length > validDetails.length) {
+    const invalidDetails = assignedDetails.filter(
+      (detail) => !detail || typeof detail.number !== "number" || detail.number <= 0
+    );
+    console.warn(
+      `⚠️ Found ${invalidDetails.length} invalid detail(s):`,
+      invalidDetails
+    );
+  }
+
+  const sortedDetails = [...validDetails].sort(
+    (a, b) => (a.number || 0) - (b.number || 0),
   );
 
   return (
