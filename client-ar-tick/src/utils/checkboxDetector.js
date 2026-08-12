@@ -1,28 +1,32 @@
-// utils/checkboxDetector.js - Reference-style detector (proven working)
+// utils/checkboxDetector.js - Reference-style detector with empty card handling
 
 /**
  * ============================================================
  * REFERENCE-STYLE CHECKBOX DETECTOR
- *
+ * 
  * Uses the proven approach from detectSquare.js:
  * 1. Fixed pixel coordinates on 600x1000 warped card
  * 2. Single global threshold from the entire checkbox band
  * 3. Baseline subtraction (empty box = minimum fill)
  * 4. Margin threshold for checking
+ * 5. Empty card detection - rejects false positives
  * ============================================================
  */
 
 // Fixed checkbox positions on 600x1000 warped card
 const CHECKBOX_POSITIONS = {
-  1: { x: 63, y: 460, size: 39 }, // 10.5% of 600 = 63, 46% of 1000 = 460
-  2: { x: 63, y: 610, size: 39 }, // 10.5% of 600 = 63, 61% of 1000 = 610
-  3: { x: 63, y: 760, size: 38 }, // 10.5% of 600 = 63, 76% of 1000 = 760
+  1: { x: 63, y: 460, size: 39 },   // 10.5% of 600 = 63, 46% of 1000 = 460
+  2: { x: 63, y: 610, size: 39 },   // 10.5% of 600 = 63, 61% of 1000 = 610
+  3: { x: 63, y: 760, size: 38 },   // 10.5% of 600 = 63, 76% of 1000 = 760
 };
 
 const DETECTION_CONFIG = {
   cardWidth: 600,
   cardHeight: 1000,
-  margin: 12, // Percentage points above baseline to count as checked
+  margin: 15, // Percentage points above baseline to count as checked
+  minConfidence: 40, // Minimum confidence to accept a detection
+  minMarkPercentage: 15, // Minimum mark percentage to be considered a real tick
+  maxVariation: 8, // Maximum variation between boxes to consider as "empty"
 };
 
 /**
@@ -37,44 +41,41 @@ function calculateGlobalThreshold(cv, warped) {
     }
 
     const boxes = Object.values(CHECKBOX_POSITIONS);
-
-    const minX = Math.min(...boxes.map((b) => b.x));
-    const minY = Math.min(...boxes.map((b) => b.y));
-    const maxX = Math.max(...boxes.map((b) => b.x + b.size));
-    const maxY = Math.max(...boxes.map((b) => b.y + b.size));
-
-    // Ensure we have valid dimensions
+    
+    const minX = Math.min(...boxes.map(b => b.x));
+    const minY = Math.min(...boxes.map(b => b.y));
+    const maxX = Math.max(...boxes.map(b => b.x + b.size));
+    const maxY = Math.max(...boxes.map(b => b.y + b.size));
+    
     if (minX >= maxX || minY >= maxY) {
       console.warn("⚠️ Invalid checkbox band dimensions");
       return 120;
     }
-
+    
     const band = warped.roi(new cv.Rect(minX, minY, maxX - minX, maxY - minY));
     const gray = new cv.Mat();
     cv.cvtColor(band, gray, cv.COLOR_RGBA2GRAY);
-
+    
     const thresh = new cv.Mat();
     const t = cv.threshold(
       gray,
       thresh,
       0,
       255,
-      cv.THRESH_BINARY_INV + cv.THRESH_OTSU,
+      cv.THRESH_BINARY_INV + cv.THRESH_OTSU
     );
-
-    // Cleanup
+    
     gray.delete();
     thresh.delete();
     band.delete();
-
-    // Ensure threshold is in valid range
+    
     const validThreshold = Math.max(80, Math.min(180, t));
     console.log(`🎚️ Global threshold: ${validThreshold} (raw: ${t})`);
-
+    
     return validThreshold;
   } catch (error) {
     console.error("❌ Global threshold calculation error:", error);
-    return 120; // Fallback threshold
+    return 120;
   }
 }
 
@@ -84,29 +85,27 @@ function calculateGlobalThreshold(cv, warped) {
 function measureSingleCheckbox(cv, warped, position, globalThresh) {
   try {
     const { x, y, size } = position;
-
-    // Validate position
+    
     if (x < 0 || y < 0 || x + size > warped.cols || y + size > warped.rows) {
       console.warn(`⚠️ Checkbox position out of bounds: (${x}, ${y})`);
       return 0;
     }
-
+    
     const roi = warped.roi(new cv.Rect(x, y, size, size));
     const gray = new cv.Mat();
     cv.cvtColor(roi, gray, cv.COLOR_RGBA2GRAY);
-
+    
     const bin = new cv.Mat();
     cv.threshold(gray, bin, globalThresh, 255, cv.THRESH_BINARY_INV);
-
+    
     const totalPixels = size * size;
     const darkPixels = cv.countNonZero(bin);
     const fillPercentage = (darkPixels / totalPixels) * 100;
-
-    // Cleanup
+    
     roi.delete();
     gray.delete();
     bin.delete();
-
+    
     return fillPercentage;
   } catch (error) {
     console.error("❌ Checkbox measurement error:", error);
@@ -115,15 +114,19 @@ function measureSingleCheckbox(cv, warped, position, globalThresh) {
 }
 
 /**
+ * Check if the card is empty (no ticks) by analyzing variation
+ * A truly empty card will have all boxes with similar fill percentages
+ */
+function isCardEmpty(results, baseline) {
+  // If all boxes are within 8% of baseline, card is likely empty
+  const maxAboveBaseline = Math.max(...results.map(r => r.fill - baseline));
+  return maxAboveBaseline < DETECTION_CONFIG.margin;
+}
+
+/**
  * MAIN ANALYSIS FUNCTION - Uses reference-style detection
  */
-export function analyzeCheckboxes(
-  cv,
-  warpedCard,
-  config,
-  globalThreshold = null,
-  debug = false,
-) {
+export function analyzeCheckboxes(cv, warpedCard, config, globalThreshold = null, debug = false) {
   try {
     // --- 1. Validate inputs ---
     if (!warpedCard || warpedCard.empty()) {
@@ -138,20 +141,20 @@ export function analyzeCheckboxes(
         baseline: 0,
         globalThreshold: 120,
         margin: DETECTION_CONFIG.margin,
+        isEmpty: true,
       };
     }
 
     // --- 2. Get checkbox titles from config ---
     const checkboxTitles = {};
     if (config?.checkboxes) {
-      config.checkboxes.forEach((cb) => {
+      config.checkboxes.forEach(cb => {
         checkboxTitles[cb.number] = cb.title || `Option ${cb.number}`;
       });
     }
 
     // --- 3. Compute global threshold ---
-    const globalThresh =
-      globalThreshold || calculateGlobalThreshold(cv, warpedCard);
+    const globalThresh = globalThreshold || calculateGlobalThreshold(cv, warpedCard);
     console.log(`🎚️ Using global threshold: ${globalThresh}`);
 
     // --- 4. Measure each checkbox ---
@@ -162,72 +165,92 @@ export function analyzeCheckboxes(
     }));
 
     // --- 5. Determine baseline (minimum fill - represents "empty") ---
-    const baseline = Math.min(...boxes.map((b) => b.fill));
+    const baseline = Math.min(...boxes.map(b => b.fill));
     console.log(`📊 Baseline (empty): ${baseline.toFixed(1)}%`);
 
     // --- 6. Determine which boxes are checked ---
     const MARGIN = DETECTION_CONFIG.margin;
     const results = boxes.map(({ number, position, fill }) => {
-      const isChecked = fill - baseline >= MARGIN;
+      const aboveBaseline = fill - baseline;
+      const isChecked = aboveBaseline >= MARGIN;
       const title = checkboxTitles[number] || `Option ${number}`;
-
+      
       return {
         number,
         title,
         displayName: title,
         fillPercentage: Math.round(fill * 10) / 10,
         isChecked,
-        // Debug info
-        aboveBaseline: Math.round((fill - baseline) * 10) / 10,
+        aboveBaseline: Math.round(aboveBaseline * 10) / 10,
         baseline: Math.round(baseline * 10) / 10,
         margin: MARGIN,
+        confidence: Math.min(95, Math.max(0, (aboveBaseline / MARGIN) * 100)),
       };
     });
 
-    // --- 7. Summary ---
-    const checkedBoxes = results
-      .filter((r) => r.isChecked)
-      .map((r) => r.number);
-    const checkedCount = checkedBoxes.length;
+    // --- 7. Check if card is empty ---
+    const isEmpty = isCardEmpty(results, baseline);
+    
+    // --- 8. Filter results - if card is empty, force all to unchecked ---
+    let finalResults = results;
+    let checkedBoxes = [];
+    let checkedCount = 0;
+    
+    if (isEmpty) {
+      console.log("📋 Card appears to be EMPTY - no ticks detected");
+      // Override: force all to unchecked
+      finalResults = results.map(r => ({
+        ...r,
+        isChecked: false,
+        confidence: 0,
+      }));
+      checkedBoxes = [];
+      checkedCount = 0;
+    } else {
+      // Apply confidence filter
+      finalResults = results.map(r => ({
+        ...r,
+        isChecked: r.isChecked && r.confidence >= DETECTION_CONFIG.minConfidence,
+      }));
+      checkedBoxes = finalResults.filter(r => r.isChecked).map(r => r.number);
+      checkedCount = checkedBoxes.length;
+    }
 
     console.log("📊 Checkbox Analysis:", {
       checkedCount,
       checkedBoxes,
       baseline: baseline.toFixed(1),
-      results: results.map((r) => ({
+      isEmpty,
+      results: finalResults.map(r => ({
         box: r.number,
         fill: `${r.fillPercentage}%`,
         aboveBaseline: `${r.aboveBaseline}%`,
         checked: r.isChecked,
+        confidence: `${r.confidence}%`,
       })),
     });
 
-    // --- 8. Debug visualization ---
+    // --- 9. Debug visualization ---
     let debugImage = null;
     if (debug) {
-      debugImage = drawDebugOverlay(
-        cv,
-        warpedCard,
-        results,
-        globalThresh,
-        baseline,
-      );
+      debugImage = drawDebugOverlay(cv, warpedCard, finalResults, globalThresh, baseline, isEmpty);
     }
 
     return {
-      results,
+      results: finalResults,
       checkedBoxes,
       checkedCount,
-      status: checkedCount > 0 ? "TICK_FOUND" : "NO_TICK",
-      message:
-        checkedCount > 0
-          ? `${checkedCount} checkbox(es) marked`
-          : "No marks detected",
+      status: isEmpty ? "EMPTY_CARD" : (checkedCount > 0 ? "TICK_FOUND" : "NO_TICK"),
+      message: isEmpty 
+        ? "No options selected - card is empty" 
+        : (checkedCount > 0 ? `${checkedCount} checkbox(es) marked` : "No marks detected"),
       baseline: Math.round(baseline * 10) / 10,
       globalThreshold: globalThresh,
       margin: MARGIN,
+      isEmpty,
       debugImage,
     };
+    
   } catch (error) {
     console.error("❌ analyzeCheckboxes error:", error);
     return {
@@ -240,6 +263,7 @@ export function analyzeCheckboxes(
       baseline: 0,
       globalThreshold: 120,
       margin: DETECTION_CONFIG.margin,
+      isEmpty: true,
     };
   }
 }
@@ -247,12 +271,12 @@ export function analyzeCheckboxes(
 /**
  * Draw debug overlay showing detection results
  */
-function drawDebugOverlay(cv, warpedCard, results, globalThresh, baseline) {
+function drawDebugOverlay(cv, warpedCard, results, globalThresh, baseline, isEmpty) {
   try {
     if (!warpedCard || warpedCard.empty()) {
       return null;
     }
-
+    
     const debugImage = new cv.Mat();
     warpedCard.copyTo(debugImage);
 
@@ -261,7 +285,7 @@ function drawDebugOverlay(cv, warpedCard, results, globalThresh, baseline) {
       if (!pos) continue;
 
       const { x, y, size } = pos;
-
+      
       // Color: green if checked, red if empty
       const color = result.isChecked
         ? new cv.Scalar(0, 255, 0, 255)
@@ -273,7 +297,7 @@ function drawDebugOverlay(cv, warpedCard, results, globalThresh, baseline) {
         new cv.Point(x, y),
         new cv.Point(x + size, y + size),
         color,
-        2,
+        2
       );
 
       // Draw label
@@ -286,20 +310,34 @@ function drawDebugOverlay(cv, warpedCard, results, globalThresh, baseline) {
         cv.FONT_HERSHEY_SIMPLEX,
         0.5,
         color,
-        1,
+        1
       );
     }
+
+    // Add status message
+    const statusText = isEmpty ? "⚠️ EMPTY CARD - No ticks detected" : "✅ Card detected";
+    const statusColor = isEmpty ? new cv.Scalar(255, 200, 0, 255) : new cv.Scalar(0, 255, 0, 255);
+    
+    cv.putText(
+      debugImage,
+      statusText,
+      new cv.Point(10, 30),
+      cv.FONT_HERSHEY_SIMPLEX,
+      0.6,
+      statusColor,
+      2
+    );
 
     // Add global info
     const infoText = `Threshold: ${globalThresh} | Baseline: ${baseline.toFixed(1)}% | Margin: ${DETECTION_CONFIG.margin}%`;
     cv.putText(
       debugImage,
       infoText,
-      new cv.Point(10, 30),
+      new cv.Point(10, 60),
       cv.FONT_HERSHEY_SIMPLEX,
-      0.6,
+      0.5,
       new cv.Scalar(255, 255, 0, 255),
-      1,
+      1
     );
 
     return debugImage;
@@ -311,7 +349,6 @@ function drawDebugOverlay(cv, warpedCard, results, globalThresh, baseline) {
 
 /**
  * COMPUTE GLOBAL THRESHOLD - Public wrapper
- * Kept for backward compatibility with existing code
  */
 export function computeGlobalThreshold(cv, warped, checkboxConfigs = null) {
   return calculateGlobalThreshold(cv, warped);
@@ -331,7 +368,6 @@ export function detectCheckbox(cv, checkboxMat, globalThresh = 120) {
       };
     }
 
-    // Quick and simple detection for legacy calls
     const gray = new cv.Mat();
     if (checkboxMat.channels() > 1) {
       cv.cvtColor(checkboxMat, gray, cv.COLOR_RGBA2GRAY);
@@ -341,14 +377,14 @@ export function detectCheckbox(cv, checkboxMat, globalThresh = 120) {
 
     const bin = new cv.Mat();
     cv.threshold(gray, bin, globalThresh, 255, cv.THRESH_BINARY_INV);
-
+    
     const totalPixels = gray.rows * gray.cols;
     const darkPixels = cv.countNonZero(bin);
     const markPercentage = (darkPixels / totalPixels) * 100;
-
+    
     gray.delete();
     bin.delete();
-
+    
     return {
       isChecked: markPercentage > 15,
       markPercentage: Math.round(markPercentage * 10) / 10,

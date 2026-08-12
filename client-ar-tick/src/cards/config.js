@@ -1,11 +1,8 @@
-// cards/config.js - Updated to match reference-style detection
-
 export const CARD_CONFIG = {
   cardWidth: 600,
   cardHeight: 1000,
   referenceImage: "/cards/eatingStyle/reference.jpg",
 
-  // These are now used only for titles/debug, not for ROI positions
   checkboxes: [
     {
       number: 1,
@@ -25,8 +22,8 @@ export const CARD_CONFIG = {
   ],
 
   detection: {
-    margin: 12,  // Percentage points above baseline
-    minConfidence: 30,
+    margin: 15,
+    minConfidence: 40,
     maxFillPercentage: 100,
     minFillPercentage: 20,
   },
