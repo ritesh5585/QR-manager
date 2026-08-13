@@ -521,23 +521,23 @@ const CardScanner = ({ onCardScanned, qrId, onClose }) => {
         }
 
         // Draw guide overlay
-        const boxW = Math.min(vw * 0.8, 400);
+        const boxW = Math.min(vw * 0.95, 900);
         const boxH = boxW * 1.4;
         const x = (vw - boxW) / 2;
         const y = (vh - boxH) / 2;
         const color = cardDetected
-          ? "#22c55e"
+          ? "rgba(34,197,94,0.5)"
           : cardFound
-            ? "#facc15"
-            : "rgba(255,255,255,0.3)";
+            ? "rgba(250,204,21,0.4)"
+            : "rgba(255,255,255,0.15)";
 
         displayCtx.strokeStyle = color;
-        displayCtx.lineWidth = cardDetected ? 4 : 3;
-        displayCtx.setLineDash([10, 10]);
+        displayCtx.lineWidth = 5;
+        displayCtx.setLineDash([6, 8]);
         displayCtx.strokeRect(x, y, boxW, boxH);
         displayCtx.setLineDash([]);
 
-        const cornerSize = 30;
+        // const cornerSize = 30;
         displayCtx.strokeStyle = cardDetected
           ? "#22c55e"
           : cardFound
@@ -558,10 +558,10 @@ const CardScanner = ({ onCardScanned, qrId, onClose }) => {
         });
 
         const statusText = cardDetected
-          ? "✅ Card Detected"
+          ? " Card Detected"
           : cardFound
             ? `🔍 ${matches} matches`
-            : "Place card in frame";
+            : "";
         displayCtx.fillStyle = cardDetected
           ? "#22c55e"
           : cardFound
@@ -599,13 +599,13 @@ const CardScanner = ({ onCardScanned, qrId, onClose }) => {
   // UI RENDER
   // ============================================================
   return (
-    <div className="fixed inset-0 bg-black overflow-hidden z-50">
+    <div className="fixed inset-0 overflow-hidden z-50">
       <video ref={videoRef} playsInline autoPlay muted className="hidden" />
       <canvas ref={canvasRef} style={{ display: "none" }} />
       <canvas
         ref={displayCanvasRef}
-        className="absolute inset-0 w-full h-full object-contain"
-        style={{ backgroundColor: "#000" }}
+        className="absolute inset-0 w-full h-full object-cover bg-transparent"
+        style={{ backgroundColor: "transparent" }}
       />
 
       {/* Loading */}
@@ -670,76 +670,9 @@ const CardScanner = ({ onCardScanned, qrId, onClose }) => {
         <>
           <div className="absolute inset-0 bg-gradient-to-b from-black/60 via-transparent to-black/70 pointer-events-none z-10" />
 
-          {/* Top Bar */}
-          <div className="absolute top-0 left-0 right-0 flex items-center justify-between px-4 pt-4 z-20">
-            <div>
-              <h1 className="text-white text-lg font-semibold tracking-wide drop-shadow-lg">
-                Scan Your Card
-              </h1>
-              <p className="text-gray-300 text-xs mt-1 opacity-80">
-                {qrId ? `QR: ${qrId}` : "Place card in frame"}
-              </p>
-            </div>
-            <div className="flex gap-2">
-              <button
-                onClick={flipCamera}
-                disabled={isFlipping}
-                className="w-11 h-11 rounded-full flex items-center justify-center backdrop-blur-md bg-white/20 text-white hover:bg-white/30 transition-all disabled:opacity-50 border border-white/10"
-              >
-                <Icon name="flip" className="w-5 h-5" />
-              </button>
-              {torchAvailable && (
-                <button
-                  onClick={toggleTorch}
-                  className={`w-11 h-11 rounded-full flex items-center justify-center backdrop-blur-md transition-all border border-white/10 ${
-                    torchOn
-                      ? "bg-yellow-400 text-black"
-                      : "bg-white/20 text-white hover:bg-white/30"
-                  }`}
-                >
-                  {torchOn ? (
-                    <Icon name="flashOn" className="w-5 h-5" />
-                  ) : (
-                    <Icon name="flashOff" className="w-5 h-5" />
-                  )}
-                </button>
-              )}
-              <button
-                onClick={() => updateState({ cameraOn: false })}
-                className="w-11 h-11 rounded-full flex items-center justify-center backdrop-blur-md bg-white/20 text-white hover:bg-white/30 transition-all border border-white/10"
-              >
-                <Icon name="cameraOff" className="w-5 h-5" />
-              </button>
-              {onClose && (
-                <button
-                  onClick={onClose}
-                  className="w-11 h-11 rounded-full flex items-center justify-center backdrop-blur-md bg-white/20 text-white hover:bg-white/30 transition-all border border-white/10"
-                >
-                  <Icon name="close" className="w-5 h-5" />
-                </button>
-              )}
-            </div>
-          </div>
-
-          {/* Card Frame */}
-          <div className="absolute inset-0 flex items-center justify-center pointer-events-none px-10 z-10">
-            <motion.div
-              animate={{
-                borderColor: cardDetected
-                  ? "#22c55e"
-                  : cardFound
-                    ? "#facc15"
-                    : "rgba(255,255,255,0.4)",
-                scale: cardDetected ? 1.02 : cardFound ? 1.01 : 1,
-              }}
-              transition={{ duration: 0.3 }}
-              className="w-full max-w-[340px] aspect-[3/5] rounded-2xl border-[3px] border-dashed"
-            />
-          </div>
-
           {/* Bottom Status */}
           <div className="absolute bottom-10 left-0 right-0 flex flex-col items-center gap-3 px-6 z-20">
-            <motion.div
+            {/* <motion.div
               key={matches}
               initial={{ scale: 0.9, opacity: 0.7 }}
               animate={{ scale: 1, opacity: 1 }}
@@ -759,7 +692,7 @@ const CardScanner = ({ onCardScanned, qrId, onClose }) => {
                 : cardFound
                   ? `Hold steady... (${matches} matches)`
                   : `Position card in frame`}
-            </motion.div>
+            </motion.div> */}
 
             {cardFound && !cardDetected && (
               <div className="w-48 h-1 bg-white/20 rounded-full overflow-hidden">
