@@ -1,4 +1,4 @@
-// CardScanner.jsx - Optimized version with custom popup
+// CardScanner.jsx - Fixed Flashlight Popup Behavior
 
 import React, { useEffect, useRef, useState, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
@@ -61,24 +61,31 @@ const Icon = ({ name, className, ...props }) => {
         <path d="M18 6L6 18M6 6l12 12" />
       </svg>
     ),
+    brightness: (p) => (
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" {...p}>
+        <circle cx="12" cy="12" r="4" />
+        <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41" />
+      </svg>
+    ),
   };
   const IconComponent = icons[name];
   return IconComponent ? <IconComponent className={className} {...props} /> : null;
 };
 
 // ============================================================
-// POPUP COMPONENT
+// POPUP COMPONENTS
 // ============================================================
+
 const ScanAgainPopup = ({ message, onClose }) => {
   const navigate = useNavigate();
-  
+
   return (
     <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-[100]">
       <motion.div
         initial={{ scale: 0.9, opacity: 0 }}
         animate={{ scale: 1, opacity: 1 }}
         exit={{ scale: 0.9, opacity: 0 }}
-        className="bg-gray-900 rounded-lg p-8 max-w-md w-full text-center shadow-2xl border border-gray-700"
+        className="bg-gray-900 rounded-lg p-8 max-w-md w-[90%] text-center shadow-2xl border border-gray-700"
       >
         <div className="text-6xl mb-4">📷</div>
         <h2 className="text-2xl font-bold text-white mb-2">Scan Again</h2>
@@ -97,6 +104,70 @@ const ScanAgainPopup = ({ message, onClose }) => {
   );
 };
 
+const CardNotFoundPopup = ({ onClose }) => {
+  const navigate = useNavigate();
+
+  return (
+    <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-[100]">
+      <motion.div
+        initial={{ scale: 0.9, opacity: 0 }}
+        animate={{ scale: 1, opacity: 1 }}
+        exit={{ scale: 0.9, opacity: 0 }}
+        className="bg-gray-900 rounded-lg p-8 max-w-md w-full text-center shadow-2xl border border-gray-700"
+      >
+        <button
+          onClick={() => {
+            onClose();
+            navigate("/");
+          }}
+          className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-medium"
+        >
+          Scan Again
+        </button>
+      </motion.div>
+    </div>
+  );
+};
+
+const FlashlightRequiredPopup = ({ onClose, onEnableFlash }) => {
+  return (
+    <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-[100]">
+      <motion.div
+        initial={{ scale: 0.9, opacity: 0 }}
+        animate={{ scale: 1, opacity: 1 }}
+        exit={{ scale: 0.9, opacity: 0 }}
+        className="bg-gray-900 rounded-lg p-8 max-w-md w-full text-center shadow-2xl border border-gray-700"
+      >
+        <div className="text-6xl mb-4">🔦</div>
+        <h2 className="text-2xl font-bold text-white mb-2">Low Light Detected</h2>
+        <p className="text-gray-400 mb-6">
+          The environment is too dark. Please turn on the flashlight for better detection.
+        </p>
+        <div className="flex flex-col gap-3">
+          <button
+            onClick={() => {
+              onEnableFlash();
+              onClose();
+            }}
+            className="px-6 py-2 bg-yellow-600 text-white rounded-lg hover:bg-yellow-700 transition-colors font-medium flex items-center justify-center gap-2"
+          >
+            <Icon name="flashOn" className="w-5 h-5" />
+            Turn On Flashlight
+          </button>
+          <button
+            onClick={() => {
+              onClose();
+            }}
+            className="px-6 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700 transition-colors font-medium"
+          >
+            Continue Anyway
+          </button>
+        </div>
+      </motion.div>
+    </div>
+  );
+};
+
 // ============================================================
 // CONFIG
 // ============================================================
@@ -106,6 +177,8 @@ const CONFIG = {
   STABLE_FRAMES_REQUIRED: 2,
   CAMERA_TIMEOUT: 10000,
   PROCESSING_COOLDOWN: 3000,
+  DARKNESS_THRESHOLD: 80,
+  CARD_NOT_FOUND_TIMEOUT: 5000,
 };
 
 // ============================================================
@@ -113,8 +186,10 @@ const CONFIG = {
 // ============================================================
 const CardScanner = ({ onCardScanned, qrId, onClose }) => {
   const navigate = useNavigate();
-  
-  // Refs
+
+  // ============================================================
+  // REFS
+  // ============================================================
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
   const displayCanvasRef = useRef(null);
@@ -126,8 +201,13 @@ const CardScanner = ({ onCardScanned, qrId, onClose }) => {
   const lastDetection = useRef(0);
   const processed = useRef(false);
   const cooldownUntil = useRef(0);
+  const detectionTimeoutRef = useRef(null);
+  const brightnessCheckRef = useRef(null);
+  const flashlightDismissedRef = useRef(false); // Track if flashlight popup was dismissed
 
-  // State
+  // ============================================================
+  // STATE
+  // ============================================================
   const [state, setState] = useState({
     cameraOn: true,
     torchOn: false,
@@ -141,11 +221,15 @@ const CardScanner = ({ onCardScanned, qrId, onClose }) => {
     cardFound: false,
     matches: 0,
     permissionStatus: "unknown",
+    isDark: false,
   });
 
   const [isProcessing, setIsProcessing] = useState(false);
   const [showPopup, setShowPopup] = useState(false);
   const [popupMessage, setPopupMessage] = useState("");
+  const [showCardNotFoundPopup, setShowCardNotFoundPopup] = useState(false);
+  const [showFlashlightPopup, setShowFlashlightPopup] = useState(false);
+  const [isDarkDetected, setIsDarkDetected] = useState(false);
 
   const {
     cameraOn,
@@ -160,11 +244,12 @@ const CardScanner = ({ onCardScanned, qrId, onClose }) => {
     cardFound,
     matches,
     permissionStatus,
+    isDark,
   } = state;
 
   const updateState = useCallback(
     (updates) => setState((prev) => ({ ...prev, ...updates })),
-    []
+    [],
   );
 
   // ============================================================
@@ -175,6 +260,11 @@ const CardScanner = ({ onCardScanned, qrId, onClose }) => {
     stableFrames.current = 0;
     lastCornersRef.current = null;
     updateState({ cardDetected: false });
+
+    if (detectionTimeoutRef.current) {
+      clearTimeout(detectionTimeoutRef.current);
+      detectionTimeoutRef.current = null;
+    }
   }, [updateState]);
 
   const showPopupMessage = useCallback((message) => {
@@ -187,6 +277,20 @@ const CardScanner = ({ onCardScanned, qrId, onClose }) => {
     resetState();
     setIsProcessing(false);
   }, [resetState]);
+
+  const closeCardNotFoundPopup = useCallback(() => {
+    setShowCardNotFoundPopup(false);
+    resetState();
+    setIsProcessing(false);
+    // Reset flashlight dismissal when scan again is clicked
+    flashlightDismissedRef.current = false;
+  }, [resetState]);
+
+  const closeFlashlightPopup = useCallback(() => {
+    setShowFlashlightPopup(false);
+    // Mark flashlight as dismissed so it won't show again
+    flashlightDismissedRef.current = true;
+  }, []);
 
   const generateCardImage = useCallback((cv, warped) => {
     try {
@@ -226,7 +330,7 @@ const CardScanner = ({ onCardScanned, qrId, onClose }) => {
           srcMat,
           result.corners,
           CARD_CONFIG.cardWidth,
-          CARD_CONFIG.cardHeight
+          CARD_CONFIG.cardHeight,
         );
 
         if (!warped || warped.empty()) {
@@ -244,7 +348,7 @@ const CardScanner = ({ onCardScanned, qrId, onClose }) => {
           warped,
           CARD_CONFIG,
           globalThreshold,
-          false
+          false,
         );
         console.log("📊 Detection:", analysis);
 
@@ -279,26 +383,60 @@ const CardScanner = ({ onCardScanned, qrId, onClose }) => {
         showPopupMessage("An error occurred while processing the card.");
       }
     },
-    [isProcessing, resetState, showPopupMessage, generateCardImage, cleanupResources, onCardScanned]
+    [
+      isProcessing,
+      resetState,
+      showPopupMessage,
+      generateCardImage,
+      cleanupResources,
+      onCardScanned,
+    ],
   );
+
+  // ============================================================
+  // BRIGHTNESS / DARKNESS DETECTION
+  // ============================================================
+  const checkBrightness = useCallback((imageData) => {
+    const data = imageData.data;
+    let totalBrightness = 0;
+    const pixels = data.length / 4;
+
+    for (let i = 0; i < data.length; i += 4) {
+      const r = data[i];
+      const g = data[i + 1];
+      const b = data[i + 2];
+      const brightness = (r + g + b) / 3;
+      totalBrightness += brightness;
+    }
+
+    const avgBrightness = totalBrightness / pixels;
+    const isDark = avgBrightness < CONFIG.DARKNESS_THRESHOLD;
+
+    return { avgBrightness, isDark };
+  }, []);
 
   // ============================================================
   // DETECTION
   // ============================================================
   const isCornerStable = useCallback(
     (prevCorners, newCorners, maxDisplacement = 40) => {
-      if (!prevCorners || !newCorners || prevCorners.length !== 4 || newCorners.length !== 4)
+      if (
+        !prevCorners ||
+        !newCorners ||
+        prevCorners.length !== 4 ||
+        newCorners.length !== 4
+      )
         return false;
       for (let i = 0; i < 4; i++) {
         const dist = Math.hypot(
           newCorners[i].x - prevCorners[i].x,
-          newCorners[i].y - prevCorners[i].y
+          newCorners[i].y - prevCorners[i].y,
         );
         if (dist > maxDisplacement) return false;
       }
       return true;
     },
-    []
+    [],
   );
 
   const detectCard = useCallback(
@@ -310,29 +448,81 @@ const CardScanner = ({ onCardScanned, qrId, onClose }) => {
         const src = cv.imread(canvas);
         const result = findCard(cv, src);
 
-        if (result && result.found && result.matches >= CONFIG.MIN_MATCHES) {
-          updateState({ matches: result.matches, cardFound: true });
-          const cornersStable = isCornerStable(lastCornersRef.current, result.corners);
+        // Check brightness if card not found
+        if (!result || !result.found || result.matches < CONFIG.MIN_MATCHES) {
+          const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+          const { isDark, avgBrightness } = checkBrightness(imageData);
+
+          // Show flashlight popup only if:
+          // 1. It's dark
+          // 2. Flashlight is not on
+          // 3. Flashlight popup hasn't been dismissed
+          // 4. No other popup is showing
+          // 5. Card not found popup is not showing
+          if (
+            isDark && 
+            !torchOn && 
+            !flashlightDismissedRef.current && 
+            !showFlashlightPopup &&
+            !showCardNotFoundPopup &&
+            !showPopup
+          ) {
+            setIsDarkDetected(true);
+            setShowFlashlightPopup(true);
+          } else {
+            setIsDarkDetected(false);
+          }
+
+          updateState({
+            matches: result?.matches || 0,
+            cardFound: false,
+            cardDetected: false,
+            isDark: isDark,
+          });
+          stableFrames.current = 0;
+          lastCornersRef.current = null;
+          processed.current = false;
+
+          // Show card not found popup after timeout
+          if (!detectionTimeoutRef.current && !showCardNotFoundPopup) {
+            detectionTimeoutRef.current = setTimeout(() => {
+              setShowCardNotFoundPopup(true);
+              detectionTimeoutRef.current = null;
+            }, CONFIG.CARD_NOT_FOUND_TIMEOUT);
+          }
+        } else {
+          // Card found - clear timeout and popup
+          if (detectionTimeoutRef.current) {
+            clearTimeout(detectionTimeoutRef.current);
+            detectionTimeoutRef.current = null;
+          }
+          if (showCardNotFoundPopup) {
+            setShowCardNotFoundPopup(false);
+          }
+
+          updateState({
+            matches: result.matches,
+            cardFound: true,
+            isDark: false,
+          });
+          const cornersStable = isCornerStable(
+            lastCornersRef.current,
+            result.corners,
+          );
           lastCornersRef.current = result.corners;
           stableFrames.current = cornersStable ? stableFrames.current + 1 : 1;
           updateState({
             cardDetected: stableFrames.current >= CONFIG.STABLE_FRAMES_REQUIRED,
           });
 
-          if (stableFrames.current >= CONFIG.STABLE_FRAMES_REQUIRED && !processed.current) {
+          if (
+            stableFrames.current >= CONFIG.STABLE_FRAMES_REQUIRED &&
+            !processed.current
+          ) {
             processed.current = true;
             console.log("🎯 Card detected! Processing...");
             processCard(cv, canvas, result);
           }
-        } else {
-          updateState({
-            matches: result?.matches || 0,
-            cardFound: false,
-            cardDetected: false,
-          });
-          stableFrames.current = 0;
-          lastCornersRef.current = null;
-          processed.current = false;
         }
         src.delete();
       } catch (err) {
@@ -340,12 +530,23 @@ const CardScanner = ({ onCardScanned, qrId, onClose }) => {
         processed.current = false;
       }
     },
-    [isCornerStable, processCard, updateState, isProcessing]
+    [
+      isCornerStable,
+      processCard,
+      updateState,
+      isProcessing,
+      checkBrightness,
+      torchOn,
+      showFlashlightPopup,
+      showCardNotFoundPopup,
+      showPopup,
+    ],
   );
 
   // ============================================================
   // LIFECYCLE
   // ============================================================
+
   // Load OpenCV
   useEffect(() => {
     if (window.cv?.Mat) {
@@ -376,7 +577,10 @@ const CardScanner = ({ onCardScanned, qrId, onClose }) => {
     if (!cvReady) return;
     const loadRef = async () => {
       try {
-        const loaded = await loadReferenceCard(window.cv, CARD_CONFIG.referenceImage);
+        const loaded = await loadReferenceCard(
+          window.cv,
+          CARD_CONFIG.referenceImage,
+        );
         if (loaded) console.log("✅ Reference card loaded");
         else toast.error("Failed to load reference card image");
       } catch (err) {
@@ -395,7 +599,8 @@ const CardScanner = ({ onCardScanned, qrId, onClose }) => {
         updateState({ permissionStatus: status });
         if (status === "denied") {
           updateState({
-            cameraError: "Camera access blocked. Please enable in browser settings.",
+            cameraError:
+              "Camera access blocked. Please enable in browser settings.",
           });
         }
       } catch (err) {}
@@ -452,7 +657,14 @@ const CardScanner = ({ onCardScanned, qrId, onClose }) => {
     if (!torchAvailable) return;
     const next = !torchOn;
     const ok = await setTorch(trackRef.current, next);
-    if (ok) updateState({ torchOn: next });
+    if (ok) {
+      updateState({ torchOn: next });
+      if (next) {
+        setShowFlashlightPopup(false);
+        setIsDarkDetected(false);
+        flashlightDismissedRef.current = true; // Mark as dismissed after enabling
+      }
+    }
   }, [torchOn, torchAvailable, updateState]);
 
   const flipCamera = useCallback(async () => {
@@ -468,18 +680,40 @@ const CardScanner = ({ onCardScanned, qrId, onClose }) => {
     updateState({ isFlipping: false });
   }, [facingMode, isFlipping, startCamera, updateState]);
 
+  // Clear timeouts on unmount
+  useEffect(() => {
+    return () => {
+      if (detectionTimeoutRef.current) {
+        clearTimeout(detectionTimeoutRef.current);
+      }
+      if (brightnessCheckRef.current) {
+        clearTimeout(brightnessCheckRef.current);
+      }
+    };
+  }, []);
+
+  // Reset flashlight dismissal when scan again popup appears
+  useEffect(() => {
+    if (showPopup || showCardNotFoundPopup) {
+      flashlightDismissedRef.current = false;
+    }
+  }, [showPopup, showCardNotFoundPopup]);
+
   // ============================================================
   // RENDER LOOP
   // ============================================================
   useEffect(() => {
-    if (!cameraOn || cameraError || !streamRef.current || isLoading || !cvReady) return;
+    if (!cameraOn || cameraError || !streamRef.current || isLoading || !cvReady)
+      return;
     const video = videoRef.current;
     const canvas = canvasRef.current;
     const displayCanvas = displayCanvasRef.current;
     if (!video || !canvas || !displayCanvas) return;
 
     const ctx = canvas.getContext("2d", { willReadFrequently: true });
-    const displayCtx = displayCanvas.getContext("2d", { willReadFrequently: true });
+    const displayCtx = displayCanvas.getContext("2d", {
+      willReadFrequently: true,
+    });
 
     const renderFrame = () => {
       if (!cameraOn || !video) {
@@ -511,17 +745,21 @@ const CardScanner = ({ onCardScanned, qrId, onClose }) => {
         ctx.drawImage(displayCanvas, 0, 0);
 
         const now = Date.now();
-        if (now - lastDetection.current >= CONFIG.FRAME_INTERVAL && cvReady && !processed.current) {
+        if (
+          now - lastDetection.current >= CONFIG.FRAME_INTERVAL &&
+          cvReady &&
+          !processed.current
+        ) {
           lastDetection.current = now;
           detectCard(ctx, canvas);
         }
 
-        // Draw guide overlay
+        // Draw guide overlay (transparent border)
         const boxW = Math.min(vw * 0.8, 400);
         const boxH = boxW * 1.4;
         const x = (vw - boxW) / 2;
         const y = (vh - boxH) / 2;
-        const color = cardDetected ? "#22c55e" : cardFound ? "#facc15" : "rgba(255,255,255,0.3)";
+        const color = "transparent";
 
         displayCtx.strokeStyle = color;
         displayCtx.lineWidth = cardDetected ? 4 : 3;
@@ -529,8 +767,9 @@ const CardScanner = ({ onCardScanned, qrId, onClose }) => {
         displayCtx.strokeRect(x, y, boxW, boxH);
         displayCtx.setLineDash([]);
 
+        // Corner marks (transparent)
         const cornerSize = 30;
-        displayCtx.strokeStyle = cardDetected ? "#22c55e" : cardFound ? "#facc15" : "#ffffff80";
+        displayCtx.strokeStyle = "transparent";
         displayCtx.lineWidth = 4;
         const corners = [
           [x, y, x + cornerSize, y],
@@ -545,11 +784,46 @@ const CardScanner = ({ onCardScanned, qrId, onClose }) => {
           displayCtx.stroke();
         });
 
-        const statusText = cardDetected ? "✅ Card Detected" : cardFound ? `🔍 ${matches} matches` : "";
-        displayCtx.fillStyle = cardDetected ? "#22c55e" : cardFound ? "#facc15" : "rgba(255,255,255,0.5)";
-        displayCtx.font = cardDetected ? "bold 14px sans-serif" : "14px sans-serif";
-        displayCtx.textAlign = "center";
-        displayCtx.fillText(statusText, vw / 2, y - 20);
+        // Status text on video
+        const statusText = cardDetected
+          ? "✅ Card Detected"
+          : cardFound
+            ? `🔍 ${matches} matches`
+            : isDarkDetected
+              ? "💡 Low light detected"
+              : "";
+
+        if (statusText) {
+          displayCtx.fillStyle = cardDetected
+            ? "#22c55e"
+            : cardFound
+              ? "#facc15"
+              : isDarkDetected
+                ? "#f59e0b"
+                : "rgba(255,255,255,0.5)";
+          displayCtx.font = cardDetected
+            ? "bold 14px sans-serif"
+            : "14px sans-serif";
+          displayCtx.textAlign = "center";
+          displayCtx.fillText(statusText, vw / 2, y - 20);
+        }
+
+        // "Bring card closer" message when not detected
+        if (
+          !cardFound &&
+          !cardDetected &&
+          !isProcessing &&
+          !showCardNotFoundPopup
+        ) {
+          displayCtx.fillStyle = "rgba(255, 255, 255, 0.4)";
+          displayCtx.font = "14px sans-serif";
+          displayCtx.textAlign = "center";
+          displayCtx.fillText(
+            " Bring card closer to camera",
+            vw / 2,
+            vh / 2 + 60,
+          );
+        }
 
         animationRef.current = requestAnimationFrame(renderFrame);
       } catch (err) {
@@ -561,7 +835,20 @@ const CardScanner = ({ onCardScanned, qrId, onClose }) => {
     return () => {
       if (animationRef.current) cancelAnimationFrame(animationRef.current);
     };
-  }, [cameraOn, cameraError, cvReady, isLoading, facingMode, detectCard, cardDetected, cardFound, matches]);
+  }, [
+    cameraOn,
+    cameraError,
+    cvReady,
+    isLoading,
+    facingMode,
+    detectCard,
+    cardDetected,
+    cardFound,
+    matches,
+    isDarkDetected,
+    isProcessing,
+    showCardNotFoundPopup,
+  ]);
 
   // ============================================================
   // UI RENDER
@@ -573,40 +860,23 @@ const CardScanner = ({ onCardScanned, qrId, onClose }) => {
         <canvas ref={canvasRef} style={{ display: "none" }} />
         <canvas
           ref={displayCanvasRef}
-          className="absolute inset-0 w-full h-full object-contain"
+          className="absolute inset-0 w-full h-full object-cover"
+          style={{ backgroundColor: "transparent" }}
         />
 
-        {/* Close Button */}
-        <button
-          onClick={() => {
-            if (streamRef.current) {
-              streamRef.current.getTracks().forEach((t) => t.stop());
-            }
-            if (onClose) onClose();
-            else navigate("/");
-          }}
-          className="absolute top-4 right-4 z-20 p-2 bg-black/50 rounded-full hover:bg-black/70 transition-colors text-white"
-        >
-          <Icon name="close" className="w-6 h-6" />
-        </button>
-
-        {/* Torch & Flip Buttons */}
+        {/* Torch */}
         <div className="absolute top-4 left-4 z-20 flex flex-col gap-2">
           {torchAvailable && (
             <button
               onClick={toggleTorch}
               className="p-3 bg-black/50 rounded-full hover:bg-black/70 transition-colors text-white"
             >
-              <Icon name={torchOn ? "flashOn" : "flashOff"} className="w-5 h-5" />
+              <Icon
+                name={torchOn ? "flashOn" : "flashOff"}
+                className="w-5 h-5"
+              />
             </button>
           )}
-          <button
-            onClick={flipCamera}
-            disabled={isFlipping}
-            className="p-3 bg-black/50 rounded-full hover:bg-black/70 transition-colors text-white disabled:opacity-50"
-          >
-            <Icon name="flip" className="w-5 h-5" />
-          </button>
         </div>
 
         {/* Loading */}
@@ -645,7 +915,9 @@ const CardScanner = ({ onCardScanned, qrId, onClose }) => {
                 <div className="w-20 h-20 rounded-full bg-red-500/20 flex items-center justify-center mx-auto mb-4">
                   <Icon name="cameraOff" className="w-10 h-10 text-red-500" />
                 </div>
-                <h2 className="text-white text-xl font-bold mb-2">Camera Error</h2>
+                <h2 className="text-white text-xl font-bold mb-2">
+                  Camera Error
+                </h2>
                 <p className="text-red-400 text-sm">{cameraError}</p>
                 {permissionStatus === "denied" && (
                   <div className="mt-4 p-4 bg-yellow-500/20 rounded-lg border border-yellow-500/30">
@@ -671,8 +943,6 @@ const CardScanner = ({ onCardScanned, qrId, onClose }) => {
         {/* Active Camera Status */}
         {!cameraError && cameraOn && !isLoading && cvReady && (
           <>
-            <div className="absolute inset-0 bg-gradient-to-b from-black/40 via-transparent to-black/60 pointer-events-none z-10" />
-
             <div className="absolute bottom-10 left-0 right-0 flex flex-col items-center gap-3 px-6 z-20">
               <motion.div
                 key={matches}
@@ -685,15 +955,19 @@ const CardScanner = ({ onCardScanned, qrId, onClose }) => {
                     cardDetected
                       ? "bg-green-400 animate-pulse"
                       : cardFound
-                      ? "bg-yellow-400 animate-pulse"
-                      : "bg-red-400 animate-pulse"
+                        ? "bg-yellow-400 animate-pulse"
+                        : isDarkDetected
+                          ? "bg-yellow-500 animate-pulse"
+                          : "bg-red-400 animate-pulse"
                   }`}
                 />
                 {cardDetected
                   ? "✅ Card detected! Processing..."
                   : cardFound
-                  ? `Hold steady... (${matches} matches)`
-                  : "Position card in frame"}
+                    ? `Hold steady... (${matches} matches)`
+                    : isDarkDetected
+                      ? "💡 Low light - Use flashlight"
+                      : "Position card in frame"}
               </motion.div>
 
               {cardFound && !cardDetected && (
@@ -703,8 +977,9 @@ const CardScanner = ({ onCardScanned, qrId, onClose }) => {
                     initial={{ width: "0%" }}
                     animate={{
                       width: `${Math.min(
-                        (stableFrames.current / CONFIG.STABLE_FRAMES_REQUIRED) * 100,
-                        100
+                        (stableFrames.current / CONFIG.STABLE_FRAMES_REQUIRED) *
+                          100,
+                        100,
                       )}%`,
                     }}
                     transition={{ duration: 0.3 }}
@@ -724,7 +999,26 @@ const CardScanner = ({ onCardScanned, qrId, onClose }) => {
 
       {/* Scan Again Popup */}
       <AnimatePresence>
-        {showPopup && <ScanAgainPopup message={popupMessage} onClose={closePopup} />}
+        {showPopup && (
+          <ScanAgainPopup message={popupMessage} onClose={closePopup} />
+        )}
+      </AnimatePresence>
+
+      {/* Card Not Found Popup */}
+      <AnimatePresence>
+        {showCardNotFoundPopup && (
+          <CardNotFoundPopup onClose={closeCardNotFoundPopup} />
+        )}
+      </AnimatePresence>
+
+      {/* Flashlight Required Popup */}
+      <AnimatePresence>
+        {showFlashlightPopup && (
+          <FlashlightRequiredPopup
+            onClose={closeFlashlightPopup}
+            onEnableFlash={toggleTorch}
+          />
+        )}
       </AnimatePresence>
     </>
   );
