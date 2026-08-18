@@ -521,23 +521,23 @@ const CardScanner = ({ onCardScanned, qrId, onClose }) => {
         }
 
         // Draw guide overlay
-        const boxW = Math.min(vw * 0.95, 900);
+        const boxW = Math.min(vw * 0.8, 400);
         const boxH = boxW * 1.4;
         const x = (vw - boxW) / 2;
         const y = (vh - boxH) / 2;
         const color = cardDetected
-          ? "rgba(34,197,94,0.5)"
+          ? "#22c55e"
           : cardFound
-            ? "rgba(250,204,21,0.4)"
-            : "rgba(255,255,255,0.15)";
+            ? "#facc15"
+            : "rgba(255,255,255,0.3)";
 
         displayCtx.strokeStyle = color;
-        displayCtx.lineWidth = 5;
-        displayCtx.setLineDash([6, 8]);
+        displayCtx.lineWidth = cardDetected ? 4 : 3;
+        displayCtx.setLineDash([10, 10]);
         displayCtx.strokeRect(x, y, boxW, boxH);
         displayCtx.setLineDash([]);
 
-        // const cornerSize = 30;
+        const cornerSize = 30;
         displayCtx.strokeStyle = cardDetected
           ? "#22c55e"
           : cardFound
@@ -558,7 +558,7 @@ const CardScanner = ({ onCardScanned, qrId, onClose }) => {
         });
 
         const statusText = cardDetected
-          ? " Card Detected"
+          ? "✅ Card Detected"
           : cardFound
             ? `🔍 ${matches} matches`
             : "";
@@ -604,7 +604,7 @@ const CardScanner = ({ onCardScanned, qrId, onClose }) => {
       <canvas ref={canvasRef} style={{ display: "none" }} />
       <canvas
         ref={displayCanvasRef}
-        className="absolute inset-0 w-full h-full object-cover bg-transparent"
+        className="absolute inset-0 w-full h-full object-contain bg-transparent"
         style={{ backgroundColor: "transparent" }}
       />
 
@@ -672,7 +672,7 @@ const CardScanner = ({ onCardScanned, qrId, onClose }) => {
 
           {/* Bottom Status */}
           <div className="absolute bottom-10 left-0 right-0 flex flex-col items-center gap-3 px-6 z-20">
-            {/* <motion.div
+            <motion.div
               key={matches}
               initial={{ scale: 0.9, opacity: 0.7 }}
               animate={{ scale: 1, opacity: 1 }}
@@ -692,7 +692,7 @@ const CardScanner = ({ onCardScanned, qrId, onClose }) => {
                 : cardFound
                   ? `Hold steady... (${matches} matches)`
                   : `Position card in frame`}
-            </motion.div> */}
+            </motion.div>
 
             {cardFound && !cardDetected && (
               <div className="w-48 h-1 bg-white/20 rounded-full overflow-hidden">
