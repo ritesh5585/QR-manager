@@ -135,15 +135,15 @@ const DocumentScanner = () => {
         return;
       }
 
-      // ✅ Success - navigate to result page
-      // toast.success(`✅ Found ${checkedBoxes.length} option(s)!`);
+      // Success - navigate to result page
+      // toast.success(` Found ${checkedBoxes.length} option(s)!`);
       navigate(`/result/${qrId}`);
-      // ✅ Success - stay on scanner page
-// toast.success(`✅ Found ${checkedBoxes.length} option(s)!`);
+      // Success - stay on scanner page
+// toast.success(` Found ${checkedBoxes.length} option(s)!`);
     } catch (error) {
       console.error("❌ Unexpected error:", error);
 
-      // ✅ Catch any unexpected errors
+      // Catch any unexpected errors
       setErrorModal({
         isOpen: true,
         title: "Unexpected Error",

@@ -53,7 +53,7 @@ export const requestCameraWithFallback = async (facingMode = "environment") => {
   }
 
   if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-    throw new Error("Camera not supported on this device/browser.");
+    throw new Error("Camera 0not supported on this device/browser.");
   }
 
   const constraintsList = getCameraConstraints(facingMode);
