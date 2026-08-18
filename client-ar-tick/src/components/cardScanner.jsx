@@ -22,9 +22,9 @@ import { CARD_CONFIG } from "../cards/config";
 import DebugOverlay from "./DebugOverlay";
 
 // ============================================================
-// DEBUG CONFIG - Toggle this to enable/disable debug mode
+// DEBUG CONFIG - Set to false for production
 // ============================================================
-const DEBUG_MODE = true;
+const DEBUG_MODE = false; // ← IMPORTANT: Set to false for popups to work!
 
 // ============================================================
 // ICONS
@@ -200,6 +200,7 @@ const CardScanner = ({ onCardScanned, qrId, onClose }) => {
   const detectionTimeoutRef = useRef(null);
   const brightnessCheckRef = useRef(null);
   const flashlightDismissedRef = useRef(false);
+  const hasShownTorchPopup = useRef(false); // ← NEW: Track if torch popup shown
 
   // ============================================================
   // STATE
@@ -276,13 +277,12 @@ const CardScanner = ({ onCardScanned, qrId, onClose }) => {
     }
   }, [updateState]);
 
+  // ============================================================
+  // SHOW POPUP - Always show in production
+  // ============================================================
   const showPopupMessage = useCallback((message) => {
-    if (!DEBUG_MODE) {
-      setPopupMessage(message);
-      setShowPopup(true);
-    } else {
-      console.log("🔍 DEBUG: Popup suppressed:", message);
-    }
+    setPopupMessage(message);
+    setShowPopup(true);
   }, []);
 
   const closePopup = useCallback(() => {
@@ -295,12 +295,13 @@ const CardScanner = ({ onCardScanned, qrId, onClose }) => {
     setShowCardNotFoundPopup(false);
     resetState();
     setIsProcessing(false);
-    flashlightDismissedRef.current = false;
+    // DO NOT reset flashlightDismissedRef here - torch stays dismissed
   }, [resetState]);
 
   const closeFlashlightPopup = useCallback(() => {
     setShowFlashlightPopup(false);
     flashlightDismissedRef.current = true;
+    hasShownTorchPopup.current = true; // ← Track that we've shown it
   }, []);
 
   const generateCardImage = useCallback((cv, warped) => {
@@ -325,7 +326,7 @@ const CardScanner = ({ onCardScanned, qrId, onClose }) => {
   }, []);
 
   // ============================================================
-  // DEBUG FUNCTIONS - Only run when DEBUG_MODE is true
+  // DEBUG FUNCTIONS
   // ============================================================
   const captureDebugInfo = useCallback((cv, canvas, warped, analysis, result, error = null) => {
     if (!DEBUG_MODE) return null;
@@ -392,107 +393,120 @@ const CardScanner = ({ onCardScanned, qrId, onClose }) => {
   }, []);
 
   // ============================================================
-// PROCESS CARD - UPDATED FOR ACCURACY
-// ============================================================
-const processCard = useCallback(
-  (cv, canvas, result) => {
-    if (isProcessing) return;
-    setIsProcessing(true);
-    cooldownUntil.current = Date.now() + CONFIG.PROCESSING_COOLDOWN;
+  // PROCESS CARD - UPDATED WITH STRICT DETECTION
+  // ============================================================
+  const processCard = useCallback(
+    (cv, canvas, result) => {
+      if (isProcessing) return;
+      setIsProcessing(true);
+      cooldownUntil.current = Date.now() + CONFIG.PROCESSING_COOLDOWN;
 
-    try {
-      console.log("🔄 Processing detected card...");
-      const srcMat = cv.imread(canvas);
-      const warped = warpCard(
-        cv,
-        srcMat,
-        result.corners,
-        CARD_CONFIG.cardWidth,
-        CARD_CONFIG.cardHeight,
-      );
+      try {
+        console.log("🔄 Processing detected card...");
+        const srcMat = cv.imread(canvas);
+        const warped = warpCard(
+          cv,
+          srcMat,
+          result.corners,
+          CARD_CONFIG.cardWidth,
+          CARD_CONFIG.cardHeight,
+        );
 
-      if (!warped || warped.empty()) {
-        console.error("Failed to warp card");
-        if (srcMat) srcMat.delete();
+        if (!warped || warped.empty()) {
+          console.error("Failed to warp card");
+          if (srcMat) srcMat.delete();
+          resetState();
+          setIsProcessing(false);
+          showPopupMessage("Failed to detect card. Please try again.");
+          return;
+        }
+
+        // ============================================================
+        // ANALYZE CHECKBOXES - Using diff-based detection
+        // ============================================================
+        const analysis = analyzeCheckboxes(
+          cv,
+          warped,
+          CARD_CONFIG,
+          null,  // No global threshold - using diff method
+          false,
+        );
+        
+        console.log("📊 Detection Results:", analysis);
+
+        const cardImageData = generateCardImage(cv, warped);
+
+        if (DEBUG_MODE) {
+          captureDebugInfo(cv, canvas, warped, analysis, result);
+        }
+
+        // ============================================================
+        // STRICT: ONLY PASS TICKED CHECKBOXES
+        // No false positives!
+        // ============================================================
+        if (analysis.checkedCount > 0 && !analysis.isEmpty) {
+          // Get ONLY the ticked boxes with high confidence
+          const tickedResults = analysis.results.filter(
+            (r) => r.isChecked === true && r.confidence >= 50
+          );
+          
+          if (tickedResults.length > 0) {
+            console.log("✅ Ticked boxes:", analysis.checkedBoxes);
+            console.log("✅ Ticked details:", tickedResults);
+            
+            // Call parent with ONLY ticked boxes
+            if (onCardScanned) {
+              onCardScanned(tickedResults, cardImageData);
+            }
+            
+            setTimeout(() => {
+              resetState();
+              setIsProcessing(false);
+            }, CONFIG.PROCESSING_COOLDOWN);
+          } else {
+            // No tick with sufficient confidence
+            console.log("❌ No valid ticks found (low confidence)");
+            showPopupMessage("No options selected on this card. Please try again.");
+            
+            setTimeout(() => {
+              resetState();
+              setIsProcessing(false);
+            }, 1500);
+          }
+        } else {
+          // No boxes ticked
+          const message = analysis.isEmpty
+            ? "No options selected on this card."
+            : "No options detected. Please try again.";
+          
+          console.log("❌ No ticks found:", message);
+          showPopupMessage(message);
+          
+          setTimeout(() => {
+            resetState();
+            setIsProcessing(false);
+          }, 1500);
+        }
+
+        cleanupResources(warped, srcMat, analysis);
+        
+      } catch (err) {
+        console.error("Card processing error:", err);
         resetState();
         setIsProcessing(false);
-        showPopupMessage("Failed to detect card. Please try again.");
-        return;
+        showPopupMessage("An error occurred while processing the card.");
       }
-
-      // ============================================================
-      // IMPORTANT: NO global threshold - using adaptive detection
-      // ============================================================
-      const analysis = analyzeCheckboxes(
-        cv,
-        warped,
-        CARD_CONFIG,
-        null,  // ← NULL means "use adaptive"
-        false,
-      );
-      
-      console.log("📊 Detection Results:", analysis);
-
-      const cardImageData = generateCardImage(cv, warped);
-
-      if (DEBUG_MODE) {
-        captureDebugInfo(cv, canvas, warped, analysis, result);
-      }
-
-      // ============================================================
-      // ONLY PASS TICKED CHECKBOXES
-      // ============================================================
-      if (analysis.checkedCount > 0) {
-        // Get ONLY the ticked boxes
-        const tickedResults = analysis.results.filter((r) => r.isChecked === true);
-        
-        console.log("✅ Ticked boxes:", analysis.checkedBoxes);
-        console.log("✅ Ticked details:", tickedResults);
-        
-        // Call parent with ONLY ticked boxes
-        if (onCardScanned) {
-          onCardScanned(tickedResults, cardImageData);
-        }
-        
-        setTimeout(() => {
-          resetState();
-          setIsProcessing(false);
-        }, CONFIG.PROCESSING_COOLDOWN);
-        
-      } else {
-        // No boxes ticked
-        const message = analysis.isEmpty
-          ? "No options selected on this card."
-          : "No options detected. Please try again.";
-        
-        console.log("❌ No ticks found:", message);
-        showPopupMessage(message);
-        
-        setTimeout(() => {
-          resetState();
-          setIsProcessing(false);
-        }, 1500);
-      }
-
-      cleanupResources(warped, srcMat, analysis);
-      
-    } catch (err) {
-      console.error("Card processing error:", err);
-      resetState();
-      setIsProcessing(false);
-      showPopupMessage("An error occurred while processing the card.");
-    }
-  },
-  [
-    isProcessing,
-    resetState,
-    showPopupMessage,
-    generateCardImage,
-    cleanupResources,
-    onCardScanned,
-    captureDebugInfo,
-  ],
-);
+    },
+    [
+      isProcessing,
+      resetState,
+      showPopupMessage,
+      generateCardImage,
+      cleanupResources,
+      onCardScanned,
+      captureDebugInfo,
+    ],
+  );
 
   // ============================================================
   // BRIGHTNESS / DARKNESS DETECTION
@@ -553,21 +567,21 @@ const processCard = useCallback(
           const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
           const { isDark, avgBrightness } = checkBrightness(imageData);
 
-          // Flashlight popup - only in production mode
+          // ============================================================
+          // FLASHLIGHT POPUP - Show only ONCE per session
+          // ============================================================
           if (
             isDark && 
             !torchOn && 
             !flashlightDismissedRef.current && 
+            !hasShownTorchPopup.current && // ← Only if not shown yet
             !showFlashlightPopup &&
             !showCardNotFoundPopup &&
             !showPopup
           ) {
             setIsDarkDetected(true);
-            if (!DEBUG_MODE) {
-              setShowFlashlightPopup(true);
-            } else {
-              console.log("🔍 DEBUG: Low light detected - would show flashlight popup");
-            }
+            setShowFlashlightPopup(true);
+            hasShownTorchPopup.current = true; // ← Mark as shown
           } else {
             setIsDarkDetected(false);
           }
@@ -582,14 +596,10 @@ const processCard = useCallback(
           lastCornersRef.current = null;
           processed.current = false;
 
-          // Card not found popup - only in production mode
+          // Card not found popup
           if (!detectionTimeoutRef.current && !showCardNotFoundPopup) {
             detectionTimeoutRef.current = setTimeout(() => {
-              if (!DEBUG_MODE) {
-                setShowCardNotFoundPopup(true);
-              } else {
-                console.log("🔍 DEBUG: Card not found - would show popup");
-              }
+              setShowCardNotFoundPopup(true);
               detectionTimeoutRef.current = null;
             }, CONFIG.CARD_NOT_FOUND_TIMEOUT);
           }
@@ -771,6 +781,7 @@ const processCard = useCallback(
         setShowFlashlightPopup(false);
         setIsDarkDetected(false);
         flashlightDismissedRef.current = true;
+        hasShownTorchPopup.current = true;
       }
     }
   }, [torchOn, torchAvailable, updateState]);
@@ -800,12 +811,11 @@ const processCard = useCallback(
     };
   }, []);
 
-  // Reset flashlight dismissal when scan again popup appears
-  useEffect(() => {
-    if (showPopup || showCardNotFoundPopup) {
-      flashlightDismissedRef.current = false;
-    }
-  }, [showPopup, showCardNotFoundPopup]);
+  // ============================================================
+  // REMOVED: Reset flashlight dismissal - Torch stays dismissed!
+  // ============================================================
+  // The old useEffect that reset flashlightDismissedRef is GONE.
+  // Torch popup now only shows once per session.
 
   // Keyboard shortcut for debug overlay - only in debug mode
   useEffect(() => {
@@ -982,7 +992,7 @@ const processCard = useCallback(
         <canvas ref={canvasRef} style={{ display: "none" }} />
         <canvas
           ref={displayCanvasRef}
-          className="absolute inset-0 w-full h-full object-contain"
+          className="absolute inset-0 w-full h-full object-cover"
           style={{ backgroundColor: "transparent" }}
         />
 
@@ -1148,21 +1158,25 @@ const processCard = useCallback(
         />
       )}
 
-      {/* Scan Again Popup - Only shown in production mode */}
+      {/* ============================================================
+          POPUPS - Always shown in production
+          ============================================================ */}
+
+      {/* Scan Again Popup */}
       <AnimatePresence>
         {showPopup && (
           <ScanAgainPopup message={popupMessage} onClose={closePopup} />
         )}
       </AnimatePresence>
 
-      {/* Card Not Found Popup - Only shown in production mode */}
+      {/* Card Not Found Popup */}
       <AnimatePresence>
         {showCardNotFoundPopup && (
           <CardNotFoundPopup onClose={closeCardNotFoundPopup} />
         )}
       </AnimatePresence>
 
-      {/* Flashlight Required Popup - Only shown in production mode */}
+      {/* Flashlight Required Popup - Shows ONCE per session */}
       <AnimatePresence>
         {showFlashlightPopup && (
           <FlashlightRequiredPopup
