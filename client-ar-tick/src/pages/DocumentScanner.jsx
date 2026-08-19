@@ -55,7 +55,7 @@ const DocumentScanner = () => {
 
       // ✅ Check 2: No QR ID provided
       if (!qrId) {
-        console.error("❌ No QR ID provided");
+        console.error("No QR ID provided");
         setErrorModal({
           isOpen: true,
           title: "Invalid QR Code",
@@ -137,7 +137,7 @@ const DocumentScanner = () => {
 
       // Success - navigate to result page
       // toast.success(` Found ${checkedBoxes.length} option(s)!`);
-      navigate(`/result/${qrId}`);
+      // navigate(`/result/${qrId}`);
       // Success - stay on scanner page
 // toast.success(` Found ${checkedBoxes.length} option(s)!`);
     } catch (error) {

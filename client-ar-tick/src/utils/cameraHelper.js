@@ -1,5 +1,3 @@
-// utils/cameraHelper.js - Optimized for performance
-
 export const isSecureContext = () => {
   return (
     window.isSecureContext ||
@@ -10,38 +8,34 @@ export const isSecureContext = () => {
 };
 
 export const getCameraConstraints = (facingMode = "environment") => {
-  // LOWER RESOLUTION for better performance
   const constraints = [
-    // Strategy 1: Low resolution for performance
+
     {
       video: {
         facingMode: facingMode,
-        width: { ideal: 480, max: 640 },
-        height: { ideal: 360, max: 480 },
-        frameRate: { ideal: 30, max: 30 }
+        width: { ideal: 1280, max: 1920 },
+        height: { ideal: 720, max: 1080 },
+        frameRate: { ideal: 30, max: 30 },
       },
-      audio: false
+      audio: false,
     },
-    // Strategy 2: Without facing mode
     {
       video: {
-        width: { ideal: 480 },
-        height: { ideal: 360 }
+        width: { ideal: 1280 },
+        height: { ideal: 720 },
       },
-      audio: false
+      audio: false,
     },
-    // Strategy 3: Minimum constraints
     {
       video: {
-        facingMode: facingMode
+        facingMode: facingMode,
       },
-      audio: false
+      audio: false,
     },
-    // Strategy 4: Fallback
     {
       video: true,
-      audio: false
-    }
+      audio: false,
+    },
   ];
 
   return constraints;
@@ -53,7 +47,7 @@ export const requestCameraWithFallback = async (facingMode = "environment") => {
   }
 
   if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-    throw new Error("Camera 0not supported on this device/browser.");
+    throw new Error("Camera not supported on this device/browser.");
   }
 
   const constraintsList = getCameraConstraints(facingMode);
@@ -66,23 +60,33 @@ export const requestCameraWithFallback = async (facingMode = "environment") => {
         constraintsList[i],
       );
       console.log(`✅ Camera strategy ${i + 1} succeeded`);
-      
+
       const videoTracks = stream.getVideoTracks();
       if (videoTracks.length === 0) {
         throw new Error("No video tracks available");
       }
-      
-      console.log(`📹 Using camera: ${videoTracks[0].label || 'Unknown'}`);
+
+      const settings = videoTracks[0].getSettings?.();
+      console.log(
+        `📹 Using camera: ${videoTracks[0].label || "Unknown"}`,
+        settings ? `@ ${settings.width}x${settings.height}` : "",
+      );
       return stream;
     } catch (error) {
       console.warn(`❌ Camera strategy ${i + 1} failed:`, error.message);
       lastError = error;
 
-      if (error.name === "NotAllowedError" || error.name === "PermissionDeniedError") {
+      if (
+        error.name === "NotAllowedError" ||
+        error.name === "PermissionDeniedError"
+      ) {
         continue;
       }
-      
-      if (error.name === "NotFoundError" || error.name === "DevicesNotFoundError") {
+
+      if (
+        error.name === "NotFoundError" ||
+        error.name === "DevicesNotFoundError"
+      ) {
         continue;
       }
     }
@@ -129,7 +133,8 @@ export const getCameraErrorMessage = (error) => {
     PermissionDeniedError:
       "Camera access denied. Please allow camera access in your browser settings.",
     NotFoundError: "No camera found on this device. Please connect a camera.",
-    DevicesNotFoundError: "No camera found on this device. Please connect a camera.",
+    DevicesNotFoundError:
+      "No camera found on this device. Please connect a camera.",
     NotReadableError:
       "Camera is in use by another application. Please close other apps using the camera.",
     OverconstrainedError:
@@ -151,13 +156,13 @@ export const getCameraErrorMessage = (error) => {
 export const getCameraPermissionStatus = async () => {
   try {
     if (!navigator.permissions || !navigator.permissions.query) {
-      return 'unknown';
+      return "unknown";
     }
-    
-    const result = await navigator.permissions.query({ name: 'camera' });
+
+    const result = await navigator.permissions.query({ name: "camera" });
     return result.state;
   } catch (error) {
-    console.warn('Permission query not supported:', error);
-    return 'unknown';
+    console.warn("Permission query not supported:", error);
+    return "unknown";
   }
 };

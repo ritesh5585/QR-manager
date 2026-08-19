@@ -86,25 +86,6 @@ export function warpCard(cv, cameraImage, corners, cardWidth, cardHeight) {
   }
 }
 
-// ============================================================
-// ORDER CARD CORNERS
-// ============================================================
-//
-// ORB/homography doesn't guarantee that the 4 corners
-// arrive in the order we need.
-//
-// We convert:
-//
-// random order
-//
-// into:
-//
-//        top-left -------- top-right
-//             |                |
-//             |                |
-//        bottom-left ----- bottom-right
-//
-// ============================================================
 
 function orderCorners(corners) {
   if (!corners || corners.length !== 4) {
@@ -156,27 +137,6 @@ function orderCorners(corners) {
   ];
 }
 
-// ============================================================
-// EXTRACT REGION FROM WARPED CARD
-// ============================================================
-//
-// The warped card has a fixed size.
-//
-// Instead of saying:
-//
-// x = 150px
-// y = 400px
-//
-// we use percentages:
-//
-// x = 20%
-// y = 50%
-//
-// This makes the system easier to maintain if
-// cardWidth/cardHeight changes.
-//
-// ============================================================
-
 export function extractROI(cv, warpedCard, roi) {
   const { x, y, width, height } = roi;
 
@@ -212,13 +172,6 @@ export function extractROI(cv, warpedCard, roi) {
 
 // ============================================================
 // DRAW CARD BORDER
-// ============================================================
-//
-// Used only for debugging.
-//
-// It draws a line around the card so you can see
-// whether ORB actually found the correct card.
-//
 // ============================================================
 
 export function drawCardBounds(cv, image, corners, color = [0, 255, 0]) {

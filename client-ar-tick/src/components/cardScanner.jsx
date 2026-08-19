@@ -10,70 +10,74 @@ import {
 import { getVideoTrack, isTorchSupported, setTorch } from "../utils/flashlight";
 import {
   loadReferenceCard,
+  getReferenceMat,
   findCard,
   cleanupReference,
 } from "../utils/cardMatcher";
 import { warpCard } from "../utils/cardWarp";
 import {
-  computeGlobalThreshold,
   analyzeCheckboxes,
+  buildCanonicalReference,
 } from "../utils/checkboxDetector";
 import { CARD_CONFIG } from "../cards/config";
 import DebugOverlay from "./DebugOverlay";
 
 // ============================================================
-// DEBUG CONFIG - Set to false for production
+// DEBUG MODE - Set to true to enable debug overlay
 // ============================================================
-const DEBUG_MODE = false; // ← IMPORTANT: Set to false for popups to work!
+const DEBUG_MODE = true;
 
 // ============================================================
 // ICONS
 // ============================================================
 const Icon = ({ name, className, ...props }) => {
   const icons = {
-    cameraOff: (p) => (
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" {...p}>
-        <path d="M1 1l22 22M9.5 5H15l2 2h3a2 2 0 0 1 2 2v9.5M15 15.5A4 4 0 1 1 8 12M3 7v10a2 2 0 0 0 2 2h10" />
-      </svg>
-    ),
-    cameraOn: (p) => (
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" {...p}>
-        <path d="M9.5 5H15l2 2h3a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2h3z" />
-        <circle cx="12" cy="13" r="3.5" />
-      </svg>
-    ),
     flashOn: (p) => (
       <svg viewBox="0 0 24 24" fill="currentColor" {...p}>
         <path d="M13 2 3 14h7l-1 8 11-14h-7l1-6z" />
       </svg>
     ),
     flashOff: (p) => (
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" {...p}>
+      <svg
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        {...p}
+      >
         <path d="M13 2 3 14h7l-1 8 11-14h-7l1-6z" opacity="0.4" />
         <path d="M2 2l20 20" />
       </svg>
     ),
-    flip: (p) => (
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" {...p}>
-        <path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2" />
-        <path d="M8 12l4-4 4 4" />
-        <path d="M12 8v12" />
-      </svg>
-    ),
-    close: (p) => (
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" {...p}>
-        <path d="M18 6L6 18M6 6l12 12" />
-      </svg>
-    ),
     brightness: (p) => (
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" {...p}>
+      <svg
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        {...p}
+      >
         <circle cx="12" cy="12" r="4" />
         <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41" />
       </svg>
     ),
+    debug: (p) => (
+      <svg
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        {...p}
+      >
+        <path d="M12 2v4M12 22v-4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M22 12h-4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83" />
+        <circle cx="12" cy="12" r="4" />
+      </svg>
+    ),
   };
   const IconComponent = icons[name];
-  return IconComponent ? <IconComponent className={className} {...props} /> : null;
+  return IconComponent ? (
+    <IconComponent className={className} {...props} />
+  ) : null;
 };
 
 // ============================================================
@@ -82,20 +86,24 @@ const Icon = ({ name, className, ...props }) => {
 
 const ScanAgainPopup = ({ message, onClose }) => {
   const navigate = useNavigate();
+
   return (
-    <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-[100]">
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[100]">
       <motion.div
         initial={{ scale: 0.9, opacity: 0 }}
         animate={{ scale: 1, opacity: 1 }}
         exit={{ scale: 0.9, opacity: 0 }}
-        className="bg-gray-900 rounded-lg p-8 max-w-md w-full text-center shadow-2xl border border-gray-700"
+        className="bg-gray-900 rounded-lg p-4 w-[80%] text-center shadow-2xl border border-gray-700"
       >
-        <div className="text-6xl mb-4">📷</div>
-        <h2 className="text-2xl font-bold text-white mb-2">Scan Again</h2>
-        <p className="text-gray-400 mb-6">{message}</p>
+        {/* <div className="text-6xl mb-4">📷</div>
+        <h2 className="text-2xl font-bold text-white mb-2">Scan Again</h2> */}
+        <p className="text-gray-200 mb-6">{message}</p>
         <button
-          onClick={() => { onClose(); navigate("/"); }}
-          className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-medium"
+          onClick={() => {
+            onClose();
+            navigate("/");
+          }}
+          className="px-3 py-1 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-medium"
         >
           Scan Again
         </button>
@@ -104,30 +112,63 @@ const ScanAgainPopup = ({ message, onClose }) => {
   );
 };
 
-const CardNotFoundPopup = ({ onClose }) => {
-  const navigate = useNavigate();
-  return (
-    <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-[100]">
-      <motion.div
-        initial={{ scale: 0.9, opacity: 0 }}
-        animate={{ scale: 1, opacity: 1 }}
-        exit={{ scale: 0.9, opacity: 0 }}
-        className="bg-gray-900 rounded-lg p-8 max-w-md w-full text-center shadow-2xl border border-gray-700"
-      >
-        <div className="text-6xl mb-4">🔍</div>
-        <h2 className="text-2xl font-bold text-white mb-2">Card Not Found</h2>
-        <p className="text-gray-400 mb-6">
-          Please bring the card closer to the camera and ensure it's properly framed.
-        </p>
-        <button
-          onClick={() => { onClose(); navigate("/"); }}
-          className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-medium"
-        >
-          Scan Again
-        </button>
-      </motion.div>
-    </div>
-  );
+const CardNotFoundPopup = ({ onClose, delay = 2000 }) => {
+  const [showPopup, setShowPopup] = useState(false);
+
+  useEffect(() => {
+    // Delay before showing the popup
+    const timer = setTimeout(() => {
+      setShowPopup(true);
+    }, delay);
+
+    return () => clearTimeout(timer);
+  }, [delay]);
+
+  const handleRefresh = () => {
+    window.location.reload();
+  };
+
+  // return (
+  //   <AnimatePresence>
+  //     {showPopup && (
+  //       <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[100]">
+  //         <motion.div
+  //           initial={{ scale: 0.9, opacity: 0 }}
+  //           animate={{ scale: 1, opacity: 1 }}
+  //           exit={{ scale: 0.9, opacity: 0 }}
+  //           className="bg-gray-900 rounded-lg p-8 max-w-md w-full text-center shadow-2xl border border-gray-700"
+  //         >
+  //           <p className="text-gray-200 mb-6">
+  //             The card detection is taking longer than expected. Try refreshing
+  //             the camera to start again.
+  //           </p>
+  //           <div className="flex flex-col gap-3">
+  //             <button
+  //               onClick={handleRefresh}
+  //               on
+  //               className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-medium flex items-center justify-center gap-2"
+  //             >
+  //               <svg
+  //                 className="w-4 h-4"
+  //                 fill="none"
+  //                 stroke="currentColor"
+  //                 viewBox="0 0 24 24"
+  //               >
+  //                 <path
+  //                   strokeLinecap="round"
+  //                   strokeLinejoin="round"
+  //                   strokeWidth={2}
+  //                   d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
+  //                 />
+  //               </svg>
+  //               Refresh Camera
+  //             </button>
+  //           </div>
+  //         </motion.div>
+  //       </div>
+  //     )}
+  //   </AnimatePresence>
+  // );
 };
 
 const FlashlightRequiredPopup = ({ onClose, onEnableFlash }) => {
@@ -140,20 +181,28 @@ const FlashlightRequiredPopup = ({ onClose, onEnableFlash }) => {
         className="bg-gray-900 rounded-lg p-8 max-w-md w-full text-center shadow-2xl border border-gray-700"
       >
         <div className="text-6xl mb-4">🔦</div>
-        <h2 className="text-2xl font-bold text-white mb-2">Low Light Detected</h2>
+        <h2 className="text-2xl font-bold text-white mb-2">
+          Low Light Detected
+        </h2>
         <p className="text-gray-400 mb-6">
-          The environment is too dark. Please turn on the flashlight for better detection.
+          The environment is too dark. Please turn on the flashlight for better
+          detection.
         </p>
         <div className="flex flex-col gap-3">
           <button
-            onClick={() => { onEnableFlash(); onClose(); }}
+            onClick={() => {
+              onEnableFlash();
+              onClose();
+            }}
             className="px-6 py-2 bg-yellow-600 text-white rounded-lg hover:bg-yellow-700 transition-colors font-medium flex items-center justify-center gap-2"
           >
             <Icon name="flashOn" className="w-5 h-5" />
             Turn On Flashlight
           </button>
           <button
-            onClick={() => { onClose(); }}
+            onClick={() => {
+              onClose();
+            }}
             className="px-6 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700 transition-colors font-medium"
           >
             Continue Anyway
@@ -174,7 +223,8 @@ const CONFIG = {
   CAMERA_TIMEOUT: 10000,
   PROCESSING_COOLDOWN: 3000,
   DARKNESS_THRESHOLD: 80,
-  CARD_NOT_FOUND_TIMEOUT: 5000,
+  CARD_NOT_FOUND_TIMEOUT: 3000,
+  DETECTION_MAX_WIDTH: 480,
 };
 
 // ============================================================
@@ -198,9 +248,9 @@ const CardScanner = ({ onCardScanned, qrId, onClose }) => {
   const processed = useRef(false);
   const cooldownUntil = useRef(0);
   const detectionTimeoutRef = useRef(null);
-  const brightnessCheckRef = useRef(null);
   const flashlightDismissedRef = useRef(false);
-  const hasShownTorchPopup = useRef(false); // ← NEW: Track if torch popup shown
+  const canonicalReferenceRef = useRef(null);
+  const hasShownCardNotFoundRef = useRef(false);
 
   // ============================================================
   // STATE
@@ -228,11 +278,10 @@ const CardScanner = ({ onCardScanned, qrId, onClose }) => {
   const [showFlashlightPopup, setShowFlashlightPopup] = useState(false);
   const [isDarkDetected, setIsDarkDetected] = useState(false);
 
-  // ============================================================
-  // DEBUG STATE - Only initialized when DEBUG_MODE is true
-  // ============================================================
-  const [showDebug, setShowDebug] = useState(false);
+  // Debug state
   const [debugInfo, setDebugInfo] = useState(null);
+  const [showDebugOverlay, setShowDebugOverlay] = useState(DEBUG_MODE);
+  const [isDynamicMode, setIsDynamicMode] = useState(false);
   const [debugHistory, setDebugHistory] = useState([]);
   const [detectionStats, setDetectionStats] = useState({
     totalAttempts: 0,
@@ -269,6 +318,7 @@ const CardScanner = ({ onCardScanned, qrId, onClose }) => {
     processed.current = false;
     stableFrames.current = 0;
     lastCornersRef.current = null;
+    hasShownCardNotFoundRef.current = false;
     updateState({ cardDetected: false });
 
     if (detectionTimeoutRef.current) {
@@ -277,9 +327,6 @@ const CardScanner = ({ onCardScanned, qrId, onClose }) => {
     }
   }, [updateState]);
 
-  // ============================================================
-  // SHOW POPUP - Always show in production
-  // ============================================================
   const showPopupMessage = useCallback((message) => {
     setPopupMessage(message);
     setShowPopup(true);
@@ -287,21 +334,35 @@ const CardScanner = ({ onCardScanned, qrId, onClose }) => {
 
   const closePopup = useCallback(() => {
     setShowPopup(false);
-    resetState();
     setIsProcessing(false);
-  }, [resetState]);
+    processed.current = false;
+    stableFrames.current = 0;
+    lastCornersRef.current = null;
+    hasShownCardNotFoundRef.current = false;
+    updateState({ cardDetected: false });
+  }, [updateState]);
 
   const closeCardNotFoundPopup = useCallback(() => {
     setShowCardNotFoundPopup(false);
-    resetState();
+    hasShownCardNotFoundRef.current = false;
     setIsProcessing(false);
-    // DO NOT reset flashlightDismissedRef here - torch stays dismissed
-  }, [resetState]);
+    processed.current = false;
+    stableFrames.current = 0;
+    lastCornersRef.current = null;
+    updateState({ cardDetected: false });
+    flashlightDismissedRef.current = false;
+
+    if (detectionTimeoutRef.current) {
+      clearTimeout(detectionTimeoutRef.current);
+      detectionTimeoutRef.current = null;
+    }
+
+    navigate("/");
+  }, [navigate, updateState]);
 
   const closeFlashlightPopup = useCallback(() => {
     setShowFlashlightPopup(false);
     flashlightDismissedRef.current = true;
-    hasShownTorchPopup.current = true; // ← Track that we've shown it
   }, []);
 
   const generateCardImage = useCallback((cv, warped) => {
@@ -326,74 +387,85 @@ const CardScanner = ({ onCardScanned, qrId, onClose }) => {
   }, []);
 
   // ============================================================
-  // DEBUG FUNCTIONS
+  // DEBUG CAPTURE
   // ============================================================
-  const captureDebugInfo = useCallback((cv, canvas, warped, analysis, result, error = null) => {
-    if (!DEBUG_MODE) return null;
+  const captureDebugInfo = useCallback(
+    (cv, canvas, warped, analysis, result, error = null) => {
+      if (!DEBUG_MODE) return null;
 
-    const debugData = {
-      timestamp: Date.now(),
-      cardFound: !!result?.found,
-      matches: result?.matches || 0,
-      checkedCount: analysis?.checkedCount || 0,
-      isEmpty: analysis?.isEmpty ?? true,
-      confidence: analysis?.confidence || 0,
-      thresholdUsed: analysis?.thresholdUsed || 0,
-      checkboxes: analysis?.results || [],
-      warpedImage: null,
-      imageSize: { width: canvas?.width || 0, height: canvas?.height || 0 },
-      warpedSize: { width: CARD_CONFIG.cardWidth, height: CARD_CONFIG.cardHeight },
-      globalThreshold: analysis?.thresholdUsed || 0,
-      baseline: analysis?.baseline || 0,
-      margin: CARD_CONFIG.detection?.margin || 15,
-      checkboxROIs: CARD_CONFIG.checkboxes.map(cb => ({
-        number: cb.number,
-        x: cb.x / CARD_CONFIG.cardWidth,
-        y: cb.y / CARD_CONFIG.cardHeight,
-        width: cb.size / CARD_CONFIG.cardWidth,
-        height: cb.size / CARD_CONFIG.cardHeight,
-      })),
-      detectionResults: analysis?.results?.map(r => ({
-        number: r.number,
-        isChecked: r.isChecked,
-        fillPercentage: r.fillPercentage,
-        confidence: r.confidence || 0,
-        consistency: r.consistency || 0,
-      })) || [],
-      error: error ? {
-        message: error.message,
-        stack: error.stack,
-      } : null,
-    };
+      const debugData = {
+        timestamp: Date.now(),
+        cardFound: !!result?.found,
+        matches: result?.matches || 0,
+        checkedCount: analysis?.checkedCount || 0,
+        isEmpty: analysis?.isEmpty ?? true,
+        confidence: analysis?.confidence || 0,
+        thresholdUsed: analysis?.thresholdUsed || 0,
+        checkboxes: analysis?.results || [],
+        warpedImage: null,
+        imageSize: { width: canvas?.width || 0, height: canvas?.height || 0 },
+        warpedSize: {
+          width: CARD_CONFIG.cardWidth,
+          height: CARD_CONFIG.cardHeight,
+        },
+        globalThreshold: analysis?.thresholdUsed || 0,
+        baseline: analysis?.baseline || 0,
+        margin: CARD_CONFIG.detection?.margin || 15,
+        checkboxROIs: CARD_CONFIG.checkboxes.map((cb) => ({
+          number: cb.number,
+          x: cb.x / 100,
+          y: cb.y / 100,
+          width: cb.size / 100,
+          height: cb.size / 100,
+        })),
+        detectionResults:
+          analysis?.results?.map((r) => ({
+            number: r.number,
+            isChecked: r.isChecked,
+            fillPercentage: r.fillPercentage,
+            confidence: r.confidence || 0,
+            consistency: r.consistency || 0,
+          })) || [],
+        error: error
+          ? {
+              message: error.message,
+              stack: error.stack,
+            }
+          : null,
+      };
 
-    if (warped && !warped.empty()) {
-      try {
-        const tempCanvas = document.createElement("canvas");
-        tempCanvas.width = CARD_CONFIG.cardWidth;
-        tempCanvas.height = CARD_CONFIG.cardHeight;
-        cv.imshow(tempCanvas, warped);
-        debugData.warpedImage = tempCanvas.toDataURL("image/jpeg", 0.8);
-        tempCanvas.remove();
-      } catch (e) {
-        console.error("Failed to capture warped image for debug:", e);
+      if (warped && !warped.empty()) {
+        try {
+          const tempCanvas = document.createElement("canvas");
+          tempCanvas.width = CARD_CONFIG.cardWidth;
+          tempCanvas.height = CARD_CONFIG.cardHeight;
+          cv.imshow(tempCanvas, warped);
+          debugData.warpedImage = tempCanvas.toDataURL("image/jpeg", 0.8);
+          tempCanvas.remove();
+        } catch (e) {
+          console.error("Failed to capture warped image for debug:", e);
+        }
       }
-    }
 
-    setDebugInfo(debugData);
-    setDebugHistory(prev => [...prev.slice(-20), debugData]);
+      setDebugInfo(debugData);
+      setDebugHistory((prev) => [...prev.slice(-20), debugData]);
 
-    setDetectionStats(prev => ({
-      totalAttempts: prev.totalAttempts + 1,
-      successfulDetections: prev.successfulDetections + (analysis?.checkedCount > 0 ? 1 : 0),
-      failedDetections: prev.failedDetections + (analysis?.checkedCount === 0 ? 1 : 0),
-      lastError: error?.message || null,
-    }));
+      setDetectionStats((prev) => ({
+        totalAttempts: prev.totalAttempts + 1,
+        successfulDetections:
+          prev.successfulDetections + (analysis?.checkedCount > 0 ? 1 : 0),
+        failedDetections:
+          prev.failedDetections + (analysis?.checkedCount === 0 ? 1 : 0),
+        lastError: error?.message || null,
+      }));
 
-    return debugData;
-  }, []);
+      return debugData;
+    },
+    [],
+  );
 
   // ============================================================
-  // PROCESS CARD - UPDATED WITH STRICT DETECTION
+  // PROCESS CARD
   // ============================================================
   const processCard = useCallback(
     (cv, canvas, result) => {
@@ -401,10 +473,14 @@ const CardScanner = ({ onCardScanned, qrId, onClose }) => {
       setIsProcessing(true);
       cooldownUntil.current = Date.now() + CONFIG.PROCESSING_COOLDOWN;
 
+      let warped = null;
+      let srcMat = null;
+      let analysis = null;
+
       try {
         console.log("🔄 Processing detected card...");
-        const srcMat = cv.imread(canvas);
-        const warped = warpCard(
+        srcMat = cv.imread(canvas);
+        warped = warpCard(
           cv,
           srcMat,
           result.corners,
@@ -413,7 +489,7 @@ const CardScanner = ({ onCardScanned, qrId, onClose }) => {
         );
 
         if (!warped || warped.empty()) {
-          console.error("Failed to warp card");
+          console.error("❌ Failed to warp card");
           if (srcMat) srcMat.delete();
           resetState();
           setIsProcessing(false);
@@ -421,67 +497,37 @@ const CardScanner = ({ onCardScanned, qrId, onClose }) => {
           return;
         }
 
-        // ============================================================
-        // ANALYZE CHECKBOXES - Using diff-based detection
-        // ============================================================
-        const analysis = analyzeCheckboxes(
+        analysis = analyzeCheckboxes(
           cv,
           warped,
           CARD_CONFIG,
-          null,  // No global threshold - using diff method
+          canonicalReferenceRef.current,
           false,
         );
-        
-        console.log("📊 Detection Results:", analysis);
+        console.log("📊 Detection:", analysis);
 
-        const cardImageData = generateCardImage(cv, warped);
-
+        // Capture debug info
         if (DEBUG_MODE) {
           captureDebugInfo(cv, canvas, warped, analysis, result);
         }
 
-        // ============================================================
-        // STRICT: ONLY PASS TICKED CHECKBOXES
-        // No false positives!
-        // ============================================================
+        const cardImageData = generateCardImage(cv, warped);
+
         if (analysis.checkedCount > 0 && !analysis.isEmpty) {
-          // Get ONLY the ticked boxes with high confidence
-          const tickedResults = analysis.results.filter(
-            (r) => r.isChecked === true && r.confidence >= 50
-          );
-          
-          if (tickedResults.length > 0) {
-            console.log("✅ Ticked boxes:", analysis.checkedBoxes);
-            console.log("✅ Ticked details:", tickedResults);
-            
-            // Call parent with ONLY ticked boxes
-            if (onCardScanned) {
-              onCardScanned(tickedResults, cardImageData);
-            }
-            
-            setTimeout(() => {
-              resetState();
-              setIsProcessing(false);
-            }, CONFIG.PROCESSING_COOLDOWN);
-          } else {
-            // No tick with sufficient confidence
-            console.log("❌ No valid ticks found (low confidence)");
-            showPopupMessage("No options selected on this card. Please try again.");
-            
-            setTimeout(() => {
-              resetState();
-              setIsProcessing(false);
-            }, 1500);
+          console.log("✅ Checked boxes:", analysis.checkedBoxes);
+          if (onCardScanned) {
+            const checkedResults = analysis.results.filter((r) => r.isChecked);
+            onCardScanned(checkedResults, cardImageData);
           }
+          setTimeout(() => {
+            resetState();
+            setIsProcessing(false);
+          }, CONFIG.PROCESSING_COOLDOWN);
         } else {
-          // No boxes ticked
           const message = analysis.isEmpty
             ? "No options selected on this card."
             : "No options detected. Please try again.";
-          
-          console.log("❌ No ticks found:", message);
           showPopupMessage(message);
-          
           setTimeout(() => {
             resetState();
             setIsProcessing(false);
@@ -489,9 +535,11 @@ const CardScanner = ({ onCardScanned, qrId, onClose }) => {
         }
 
         cleanupResources(warped, srcMat, analysis);
-        
       } catch (err) {
-        console.error("Card processing error:", err);
+        console.error("❌ Card processing error:", err);
+        if (DEBUG_MODE) {
+          captureDebugInfo(cv, canvas, warped, analysis, result, err);
+        }
         resetState();
         setIsProcessing(false);
         showPopupMessage("An error occurred while processing the card.");
@@ -557,31 +605,28 @@ const CardScanner = ({ onCardScanned, qrId, onClose }) => {
   const detectCard = useCallback(
     (ctx, canvas) => {
       if (Date.now() < cooldownUntil.current || isProcessing) return;
+      if (showPopup || showCardNotFoundPopup || showFlashlightPopup) return;
 
       try {
         const cv = window.cv;
         const src = cv.imread(canvas);
-        const result = findCard(cv, src);
+        const result = findCard(cv, src, CONFIG.DETECTION_MAX_WIDTH);
 
         if (!result || !result.found || result.matches < CONFIG.MIN_MATCHES) {
           const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
           const { isDark, avgBrightness } = checkBrightness(imageData);
 
-          // ============================================================
-          // FLASHLIGHT POPUP - Show only ONCE per session
-          // ============================================================
           if (
-            isDark && 
-            !torchOn && 
-            !flashlightDismissedRef.current && 
-            !hasShownTorchPopup.current && // ← Only if not shown yet
+            isDark &&
+            !torchOn &&
+            !flashlightDismissedRef.current &&
             !showFlashlightPopup &&
             !showCardNotFoundPopup &&
-            !showPopup
+            !showPopup &&
+            !hasShownCardNotFoundRef.current
           ) {
             setIsDarkDetected(true);
             setShowFlashlightPopup(true);
-            hasShownTorchPopup.current = true; // ← Mark as shown
           } else {
             setIsDarkDetected(false);
           }
@@ -596,22 +641,35 @@ const CardScanner = ({ onCardScanned, qrId, onClose }) => {
           lastCornersRef.current = null;
           processed.current = false;
 
-          // Card not found popup
-          if (!detectionTimeoutRef.current && !showCardNotFoundPopup) {
+          if (
+            !detectionTimeoutRef.current &&
+            !showCardNotFoundPopup &&
+            !hasShownCardNotFoundRef.current
+          ) {
             detectionTimeoutRef.current = setTimeout(() => {
+              if (streamRef.current) {
+                streamRef.current.getTracks().forEach((t) => t.stop());
+                streamRef.current = null;
+              }
+              if (animationRef.current) {
+                cancelAnimationFrame(animationRef.current);
+                animationRef.current = null;
+              }
               setShowCardNotFoundPopup(true);
+              hasShownCardNotFoundRef.current = true;
               detectionTimeoutRef.current = null;
             }, CONFIG.CARD_NOT_FOUND_TIMEOUT);
           }
         } else {
-          // Card found - clear timeout and popup
           if (detectionTimeoutRef.current) {
             clearTimeout(detectionTimeoutRef.current);
             detectionTimeoutRef.current = null;
           }
           if (showCardNotFoundPopup) {
             setShowCardNotFoundPopup(false);
+            hasShownCardNotFoundRef.current = false;
           }
+          flashlightDismissedRef.current = false;
 
           updateState({
             matches: result.matches,
@@ -641,10 +699,6 @@ const CardScanner = ({ onCardScanned, qrId, onClose }) => {
       } catch (err) {
         console.error("Detection error:", err);
         processed.current = false;
-        
-        if (DEBUG_MODE) {
-          captureDebugInfo(window.cv, canvas, null, null, null, err);
-        }
       }
     },
     [
@@ -657,7 +711,6 @@ const CardScanner = ({ onCardScanned, qrId, onClose }) => {
       showFlashlightPopup,
       showCardNotFoundPopup,
       showPopup,
-      captureDebugInfo,
     ],
   );
 
@@ -690,7 +743,7 @@ const CardScanner = ({ onCardScanned, qrId, onClose }) => {
     document.head.appendChild(script);
   }, [updateState]);
 
-  // Load reference card
+  // Load reference card + build the canonical diff-reference for checkbox reading
   useEffect(() => {
     if (!cvReady) return;
     const loadRef = async () => {
@@ -699,14 +752,38 @@ const CardScanner = ({ onCardScanned, qrId, onClose }) => {
           window.cv,
           CARD_CONFIG.referenceImage,
         );
-        if (loaded) console.log("✅ Reference card loaded");
-        else toast.error("Failed to load reference card image");
+        if (!loaded) {
+          toast.error("Failed to load reference card image");
+          return;
+        }
+        console.log("✅ Reference card loaded");
+
+        const refMat = getReferenceMat();
+        if (refMat) {
+          canonicalReferenceRef.current = buildCanonicalReference(
+            window.cv,
+            refMat,
+            CARD_CONFIG.cardWidth,
+            CARD_CONFIG.cardHeight,
+          );
+          console.log("✅ Canonical diff-reference built for checkbox reading");
+        } else {
+          console.warn(
+            "⚠️ No reference Mat available — checkbox reading will use legacy fallback",
+          );
+        }
       } catch (err) {
         console.error("❌ Error loading reference:", err);
       }
     };
     loadRef();
-    return () => cleanupReference();
+    return () => {
+      cleanupReference();
+      if (canonicalReferenceRef.current) {
+        canonicalReferenceRef.current.delete();
+        canonicalReferenceRef.current = null;
+      }
+    };
   }, [cvReady]);
 
   // Permission check
@@ -781,7 +858,6 @@ const CardScanner = ({ onCardScanned, qrId, onClose }) => {
         setShowFlashlightPopup(false);
         setIsDarkDetected(false);
         flashlightDismissedRef.current = true;
-        hasShownTorchPopup.current = true;
       }
     }
   }, [torchOn, torchAvailable, updateState]);
@@ -805,30 +881,34 @@ const CardScanner = ({ onCardScanned, qrId, onClose }) => {
       if (detectionTimeoutRef.current) {
         clearTimeout(detectionTimeoutRef.current);
       }
-      if (brightnessCheckRef.current) {
-        clearTimeout(brightnessCheckRef.current);
-      }
     };
   }, []);
 
-  // ============================================================
-  // REMOVED: Reset flashlight dismissal - Torch stays dismissed!
-  // ============================================================
-  // The old useEffect that reset flashlightDismissedRef is GONE.
-  // Torch popup now only shows once per session.
-
-  // Keyboard shortcut for debug overlay - only in debug mode
+  // Reset flashlight dismissal when scan again popup appears
   useEffect(() => {
-    if (!DEBUG_MODE) return;
-    
-    const handleKeyDown = (e) => {
-      if (e.ctrlKey && e.shiftKey && e.key === 'D') {
-        e.preventDefault();
-        setShowDebug(prev => !prev);
-      }
-    };
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
+    if (showPopup || showCardNotFoundPopup) {
+      flashlightDismissedRef.current = false;
+    }
+  }, [showPopup, showCardNotFoundPopup]);
+
+  // Handle debug overlay toggle
+  const toggleDebugOverlay = useCallback(() => {
+    setShowDebugOverlay((prev) => !prev);
+  }, []);
+
+  const toggleDynamicMode = useCallback(() => {
+    setIsDynamicMode((prev) => !prev);
+  }, []);
+
+  const handleUpdateConfig = useCallback((config) => {
+    console.log("🔄 Config updated:", config);
+    // You can implement config update logic here
+    toast.success("Detection configuration updated");
+  }, []);
+
+  const handleDynamicAdjust = useCallback((adjustment) => {
+    console.log("🔄 Dynamic adjustment:", adjustment);
+    // You can implement dynamic adjustment logic here
   }, []);
 
   // ============================================================
@@ -837,6 +917,8 @@ const CardScanner = ({ onCardScanned, qrId, onClose }) => {
   useEffect(() => {
     if (!cameraOn || cameraError || !streamRef.current || isLoading || !cvReady)
       return;
+    if (showPopup || showCardNotFoundPopup || showFlashlightPopup) return;
+
     const video = videoRef.current;
     const canvas = canvasRef.current;
     const displayCanvas = displayCanvasRef.current;
@@ -848,7 +930,13 @@ const CardScanner = ({ onCardScanned, qrId, onClose }) => {
     });
 
     const renderFrame = () => {
-      if (!cameraOn || !video) {
+      if (
+        !cameraOn ||
+        !video ||
+        showPopup ||
+        showCardNotFoundPopup ||
+        showFlashlightPopup
+      ) {
         animationRef.current = requestAnimationFrame(renderFrame);
         return;
       }
@@ -880,29 +968,30 @@ const CardScanner = ({ onCardScanned, qrId, onClose }) => {
         if (
           now - lastDetection.current >= CONFIG.FRAME_INTERVAL &&
           cvReady &&
-          !processed.current
+          !processed.current &&
+          !showPopup &&
+          !showCardNotFoundPopup &&
+          !showFlashlightPopup
         ) {
           lastDetection.current = now;
           detectCard(ctx, canvas);
         }
 
-        // Draw guide overlay (transparent border)
+        // Draw guide overlay
         const boxW = Math.min(vw * 0.8, 400);
         const boxH = boxW * 1.4;
         const x = (vw - boxW) / 2;
         const y = (vh - boxH) / 2;
-        const color = "transparent";
 
-        displayCtx.strokeStyle = color;
-        displayCtx.lineWidth = cardDetected ? 4 : 3;
+        displayCtx.strokeStyle = "rgba(255, 255, 255, 0.3)";
+        displayCtx.lineWidth = cardDetected ? 4 : 2;
         displayCtx.setLineDash([10, 10]);
         displayCtx.strokeRect(x, y, boxW, boxH);
         displayCtx.setLineDash([]);
 
-        // Corner marks (transparent)
         const cornerSize = 30;
-        displayCtx.strokeStyle = "transparent";
-        displayCtx.lineWidth = 4;
+        displayCtx.strokeStyle = "rgba(255, 255, 255, 0.5)";
+        displayCtx.lineWidth = 3;
         const corners = [
           [x, y, x + cornerSize, y],
           [x + boxW - cornerSize, y, x + boxW, y],
@@ -916,7 +1005,6 @@ const CardScanner = ({ onCardScanned, qrId, onClose }) => {
           displayCtx.stroke();
         });
 
-        // Status text on video
         const statusText = cardDetected
           ? "✅ Card Detected"
           : cardFound
@@ -940,18 +1028,18 @@ const CardScanner = ({ onCardScanned, qrId, onClose }) => {
           displayCtx.fillText(statusText, vw / 2, y - 20);
         }
 
-        // "Bring card closer" message when not detected
         if (
           !cardFound &&
           !cardDetected &&
           !isProcessing &&
-          !showCardNotFoundPopup
+          !showCardNotFoundPopup &&
+          !hasShownCardNotFoundRef.current
         ) {
           displayCtx.fillStyle = "rgba(255, 255, 255, 0.4)";
           displayCtx.font = "14px sans-serif";
           displayCtx.textAlign = "center";
           displayCtx.fillText(
-            "📷 Bring card closer to camera",
+            "Bring card closer to camera",
             vw / 2,
             vh / 2 + 60,
           );
@@ -980,6 +1068,8 @@ const CardScanner = ({ onCardScanned, qrId, onClose }) => {
     isDarkDetected,
     isProcessing,
     showCardNotFoundPopup,
+    showPopup,
+    showFlashlightPopup,
   ]);
 
   // ============================================================
@@ -996,6 +1086,32 @@ const CardScanner = ({ onCardScanned, qrId, onClose }) => {
           style={{ backgroundColor: "transparent" }}
         />
 
+        {/* Debug Button - Only show when DEBUG_MODE is true */}
+        {DEBUG_MODE && (
+          <div className="absolute top-4 right-4 z-20 flex flex-col gap-2">
+            <button
+              onClick={toggleDebugOverlay}
+              className="p-3 bg-black/50 rounded-full hover:bg-black/70 transition-colors text-white"
+              title="Toggle Debug Overlay"
+            >
+              <Icon name="debug" className="w-5 h-5" />
+            </button>
+            {showDebugOverlay && (
+              <button
+                onClick={toggleDynamicMode}
+                className={`p-3 rounded-full transition-colors text-white ${
+                  isDynamicMode
+                    ? "bg-yellow-500/70"
+                    : "bg-black/50 hover:bg-black/70"
+                }`}
+                title="Toggle Dynamic Mode"
+              >
+                <span className="text-sm">🧠</span>
+              </button>
+            )}
+          </div>
+        )}
+
         {/* Torch */}
         <div className="absolute top-4 left-4 z-20 flex flex-col gap-2">
           {torchAvailable && (
@@ -1010,20 +1126,6 @@ const CardScanner = ({ onCardScanned, qrId, onClose }) => {
             </button>
           )}
         </div>
-
-        {/* Debug Toggle Button - Only shown in DEBUG_MODE */}
-        {DEBUG_MODE && (
-          <button
-            onClick={() => setShowDebug(prev => !prev)}
-            className="absolute top-4 right-4 z-20 p-3 bg-black/50 rounded-full hover:bg-black/70 transition-colors text-green-400 border border-green-400/30"
-            title="Toggle Debug (Ctrl+Shift+D)"
-          >
-            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-            </svg>
-          </button>
-        )}
 
         {/* Loading */}
         <AnimatePresence>
@@ -1087,80 +1189,79 @@ const CardScanner = ({ onCardScanned, qrId, onClose }) => {
         </AnimatePresence>
 
         {/* Active Camera Status */}
-        {!cameraError && cameraOn && !isLoading && cvReady && (
-          <>
-            <div className="absolute bottom-10 left-0 right-0 flex flex-col items-center gap-3 px-6 z-20">
-              <motion.div
-                key={matches}
-                initial={{ scale: 0.9, opacity: 0.7 }}
-                animate={{ scale: 1, opacity: 1 }}
-                className="bg-black/60 backdrop-blur-xl text-white px-6 py-3 rounded-full text-sm flex items-center gap-3 border border-white/10"
-              >
-                <span
-                  className={`w-3 h-3 rounded-full ${
-                    cardDetected
-                      ? "bg-green-400 animate-pulse"
-                      : cardFound
-                        ? "bg-yellow-400 animate-pulse"
-                        : isDarkDetected
-                          ? "bg-yellow-500 animate-pulse"
-                          : "bg-red-400 animate-pulse"
-                  }`}
-                />
-                {cardDetected
-                  ? "✅ Card detected! Processing..."
-                  : cardFound
-                    ? `Hold steady... (${matches} matches)`
-                    : isDarkDetected
-                      ? "💡 Low light - Use flashlight"
-                      : "Position card in frame"}
-              </motion.div>
-
-              {cardFound && !cardDetected && (
-                <div className="w-48 h-1 bg-white/20 rounded-full overflow-hidden">
-                  <motion.div
-                    className="h-full bg-yellow-400 rounded-full"
-                    initial={{ width: "0%" }}
-                    animate={{
-                      width: `${Math.min(
-                        (stableFrames.current / CONFIG.STABLE_FRAMES_REQUIRED) *
-                          100,
-                        100,
-                      )}%`,
-                    }}
-                    transition={{ duration: 0.3 }}
+        {!cameraError &&
+          cameraOn &&
+          !isLoading &&
+          cvReady &&
+          !showPopup &&
+          !showCardNotFoundPopup &&
+          !showFlashlightPopup && (
+            <>
+              <div className="absolute bottom-10 left-0 right-0 flex flex-col items-center gap-3 px-6 z-20">
+                <motion.div
+                  key={matches}
+                  initial={{ scale: 0.9, opacity: 0.7 }}
+                  animate={{ scale: 1, opacity: 1 }}
+                  className="bg-black/60 backdrop-blur-xl text-white px-6 py-3 rounded-full text-sm flex items-center gap-3 border border-white/10"
+                >
+                  <span
+                    className={`w-3 h-3 rounded-full ${
+                      cardDetected
+                        ? "bg-green-400 animate-pulse"
+                        : cardFound
+                          ? "bg-yellow-400 animate-pulse"
+                          : isDarkDetected
+                            ? "bg-yellow-500 animate-pulse"
+                            : "bg-red-400 animate-pulse"
+                    }`}
                   />
-                </div>
-              )}
+                  {cardDetected
+                    ? "✅ Card detected! Processing..."
+                    : cardFound
+                      ? `Hold steady... (${matches} matches)`
+                      : isDarkDetected
+                        ? "💡 Low light - Use flashlight"
+                        : "Position card in frame"}
+                </motion.div>
 
-              {isProcessing && (
-                <div className="bg-blue-600/80 backdrop-blur-xl text-white px-4 py-2 rounded-lg text-xs border border-white/10">
-                  ⏳ Processing card...
-                </div>
-              )}
-            </div>
-          </>
-        )}
+                {cardFound && !cardDetected && (
+                  <div className="w-48 h-1 bg-white/20 rounded-full overflow-hidden">
+                    <motion.div
+                      className="h-full bg-yellow-400 rounded-full"
+                      initial={{ width: "0%" }}
+                      animate={{
+                        width: `${Math.min(
+                          (stableFrames.current /
+                            CONFIG.STABLE_FRAMES_REQUIRED) *
+                            100,
+                          100,
+                        )}%`,
+                      }}
+                      transition={{ duration: 0.3 }}
+                    />
+                  </div>
+                )}
+
+                {isProcessing && (
+                  <div className="bg-blue-600/80 backdrop-blur-xl text-white px-4 py-2 rounded-lg text-xs border border-white/10">
+                    ⏳ Processing card...
+                  </div>
+                )}
+              </div>
+            </>
+          )}
       </div>
 
-      {/* Debug Overlay - Only shown when DEBUG_MODE is true */}
-      {DEBUG_MODE && showDebug && debugInfo && (
+      {/* Debug Overlay */}
+      {DEBUG_MODE && showDebugOverlay && debugInfo && (
         <DebugOverlay
           debugInfo={debugInfo}
-          onClose={() => setShowDebug(false)}
-          onUpdateConfig={(config) => {
-            console.log("Config updated:", config);
-          }}
-          onDynamicAdjust={(adjustment) => {
-            console.log("Dynamic adjustment:", adjustment);
-          }}
-          isDynamicMode={true}
+          onClose={() => setShowDebugOverlay(false)}
+          onUpdateConfig={handleUpdateConfig}
+          onDynamicAdjust={handleDynamicAdjust}
+          isDynamicMode={isDynamicMode}
         />
       )}
-
-      {/* ============================================================
-          POPUPS - Always shown in production
-          ============================================================ */}
 
       {/* Scan Again Popup */}
       <AnimatePresence>
@@ -1169,14 +1270,17 @@ const CardScanner = ({ onCardScanned, qrId, onClose }) => {
         )}
       </AnimatePresence>
 
-      {/* Card Not Found Popup */}
+      {/* Card Not Found Popup - with delay and refresh */}
       <AnimatePresence>
         {showCardNotFoundPopup && (
-          <CardNotFoundPopup onClose={closeCardNotFoundPopup} />
+          <CardNotFoundPopup
+            onClose={closeCardNotFoundPopup}
+            delay={2000} // Show after 3 seconds
+          />
         )}
       </AnimatePresence>
 
-      {/* Flashlight Required Popup - Shows ONCE per session */}
+      {/* Flashlight Required Popup */}
       <AnimatePresence>
         {showFlashlightPopup && (
           <FlashlightRequiredPopup

@@ -43,7 +43,9 @@ export const loadReferenceCard = async (cv, imageUrl) => {
   }
 };
 
-function isConvexQuadrilateral(pts) {
+export const getReferenceMat = () => referenceMat;
+
+export function isConvexQuadrilateral(pts) {
   if (!pts || pts.length !== 4) return false;
   let sign = 0;
   for (let i = 0; i < 4; i++) {
@@ -59,12 +61,7 @@ function isConvexQuadrilateral(pts) {
   return true;
 }
 
-/**
- * Find card in camera frame. Pass a DOWNSCALED frame (e.g. 400px wide) for
- * this — ORB cost scales with pixel count, and running it on full 640x480+
- * every ~100ms is the single biggest CPU cost in the scan loop.
- */
-export const findCard = (cv, cameraMat) => {
+export const findCard = (cv, cameraMat, maxDetectionWidth = 480) => {
   if (!referenceKeypoints || !referenceDescriptors) return null;
 
   const gray = new cv.Mat();
@@ -76,8 +73,32 @@ export const findCard = (cv, cameraMat) => {
   const cleanupSet = [gray, orb, keypoints, descriptors, matcher, matches];
   const cleanup = (...extra) => [...cleanupSet, ...extra].forEach((m) => m?.delete?.());
 
+  let scaledMat = null;
+
   try {
-    cv.cvtColor(cameraMat, gray, cv.COLOR_RGBA2GRAY);
+    // --- downscale ONLY for the ORB pass; corners get scaled back up below
+    const scale =
+      cameraMat.cols > maxDetectionWidth ? maxDetectionWidth / cameraMat.cols : 1;
+
+    let workingMat = cameraMat;
+    if (scale < 1) {
+      scaledMat = new cv.Mat();
+      cv.resize(
+        cameraMat,
+        scaledMat,
+        new cv.Size(
+          Math.round(cameraMat.cols * scale),
+          Math.round(cameraMat.rows * scale),
+        ),
+        0,
+        0,
+        cv.INTER_AREA,
+      );
+      cleanupSet.push(scaledMat);
+      workingMat = scaledMat;
+    }
+
+    cv.cvtColor(workingMat, gray, cv.COLOR_RGBA2GRAY);
     orb.detectAndCompute(gray, new cv.Mat(), keypoints, descriptors, false);
 
     if (keypoints.size() < 10) {
@@ -126,7 +147,10 @@ export const findCard = (cv, cameraMat) => {
 
     const corners = [];
     for (let i = 0; i < 4; i++) {
-      corners.push({ x: cameraCorners.data32F[i * 2], y: cameraCorners.data32F[i * 2 + 1] });
+      corners.push({
+        x: cameraCorners.data32F[i * 2] / scale,
+        y: cameraCorners.data32F[i * 2 + 1] / scale,
+      });
     }
 
     const fail = () => cleanup(srcMat, dstMat, inliers, H, referenceCorners, cameraCorners);
@@ -167,8 +191,6 @@ export const findCard = (cv, cameraMat) => {
       return null;
     }
 
-    // H, srcMat, dstMat, inliers, referenceCorners, cameraCorners are all
-    // temporaries we're done with. Only `corners` (plain JS objects) survive.
     cleanup(srcMat, dstMat, inliers, H, referenceCorners, cameraCorners);
 
     return { found: true, corners, matches: goodMatches.length, area, aspectRatio: detectedAspectRatio };
