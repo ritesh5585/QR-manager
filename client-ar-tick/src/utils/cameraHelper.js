@@ -9,33 +9,32 @@ export const isSecureContext = () => {
 
 export const getCameraConstraints = (facingMode = "environment") => {
   const constraints = [
+  {
+    video: {
+      facingMode: { ideal: "environment" },
+      width: { ideal: 1280, min: 960 },
+      height: { ideal: 720, min: 540 },
+      frameRate: { ideal: 30, max: 30 },
+    },
+    audio: false,
+  },
 
-    {
-      video: {
-        facingMode: facingMode,
-        width: { ideal: 1280, max: 1920 },
-        height: { ideal: 720, max: 1080 },
-        frameRate: { ideal: 30, max: 30 },
-      },
-      audio: false,
+  {
+    video: {
+      facingMode: { ideal: "environment" },
+      width: { ideal: 960 },
+      height: { ideal: 540 },
+      frameRate: { ideal: 30 },
     },
-    {
-      video: {
-        width: { ideal: 1280 },
-        height: { ideal: 720 },
-      },
-      audio: false,
+    audio: false,
+  },
+
+  {
+    video: {
+      facingMode: "environment",
     },
-    {
-      video: {
-        facingMode: facingMode,
-      },
-      audio: false,
-    },
-    {
-      video: true,
-      audio: false,
-    },
+    audio: false,
+  }
   ];
 
   return constraints;
@@ -43,7 +42,7 @@ export const getCameraConstraints = (facingMode = "environment") => {
 
 export const requestCameraWithFallback = async (facingMode = "environment") => {
   if (!isSecureContext()) {
-    console.warn("⚠️ Not in secure context. Camera may not work.");
+    console.warn("Not in secure context. Camera may not work.");
   }
 
   if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {

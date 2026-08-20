@@ -137,7 +137,7 @@ const DocumentScanner = () => {
 
       // Success - navigate to result page
       // toast.success(` Found ${checkedBoxes.length} option(s)!`);
-      // navigate(`/result/${qrId}`);
+      navigate(`/result/${qrId}`);
       // Success - stay on scanner page
 // toast.success(` Found ${checkedBoxes.length} option(s)!`);
     } catch (error) {

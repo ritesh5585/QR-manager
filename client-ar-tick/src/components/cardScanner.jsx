@@ -25,7 +25,7 @@ import DebugOverlay from "./DebugOverlay";
 // ============================================================
 // DEBUG MODE - Set to true to enable debug overlay
 // ============================================================
-const DEBUG_MODE = true;
+const DEBUG_MODE = false;
 
 // ============================================================
 // ICONS
@@ -128,47 +128,47 @@ const CardNotFoundPopup = ({ onClose, delay = 2000 }) => {
     window.location.reload();
   };
 
-  // return (
-  //   <AnimatePresence>
-  //     {showPopup && (
-  //       <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[100]">
-  //         <motion.div
-  //           initial={{ scale: 0.9, opacity: 0 }}
-  //           animate={{ scale: 1, opacity: 1 }}
-  //           exit={{ scale: 0.9, opacity: 0 }}
-  //           className="bg-gray-900 rounded-lg p-8 max-w-md w-full text-center shadow-2xl border border-gray-700"
-  //         >
-  //           <p className="text-gray-200 mb-6">
-  //             The card detection is taking longer than expected. Try refreshing
-  //             the camera to start again.
-  //           </p>
-  //           <div className="flex flex-col gap-3">
-  //             <button
-  //               onClick={handleRefresh}
-  //               on
-  //               className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-medium flex items-center justify-center gap-2"
-  //             >
-  //               <svg
-  //                 className="w-4 h-4"
-  //                 fill="none"
-  //                 stroke="currentColor"
-  //                 viewBox="0 0 24 24"
-  //               >
-  //                 <path
-  //                   strokeLinecap="round"
-  //                   strokeLinejoin="round"
-  //                   strokeWidth={2}
-  //                   d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
-  //                 />
-  //               </svg>
-  //               Refresh Camera
-  //             </button>
-  //           </div>
-  //         </motion.div>
-  //       </div>
-  //     )}
-  //   </AnimatePresence>
-  // );
+  return (
+    <AnimatePresence>
+      {showPopup && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[100]">
+          <motion.div
+            initial={{ scale: 0.9, opacity: 0 }}
+            animate={{ scale: 1, opacity: 1 }}
+            exit={{ scale: 0.9, opacity: 0 }}
+            className="bg-gray-900 rounded-lg p-8 max-w-md w-full text-center shadow-2xl border border-gray-700"
+          >
+            <p className="text-gray-200 mb-6">
+              The card detection is taking longer than expected. Try refreshing
+              the camera to start again.
+            </p>
+            <div className="flex flex-col gap-3">
+              <button
+                onClick={handleRefresh}
+                on
+                className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-medium flex items-center justify-center gap-2"
+              >
+                <svg
+                  className="w-4 h-4"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
+                  />
+                </svg>
+                Refresh Camera
+              </button>
+            </div>
+          </motion.div>
+        </div>
+      )}
+    </AnimatePresence>
+  );
 };
 
 const FlashlightRequiredPopup = ({ onClose, onEnableFlash }) => {
@@ -217,7 +217,7 @@ const FlashlightRequiredPopup = ({ onClose, onEnableFlash }) => {
 // CONFIG
 // ============================================================
 const CONFIG = {
-  FRAME_INTERVAL: 150,
+  FRAME_INTERVAL: 350,
   MIN_MATCHES: 20,
   STABLE_FRAMES_REQUIRED: 2,
   CAMERA_TIMEOUT: 10000,
@@ -901,7 +901,7 @@ const CardScanner = ({ onCardScanned, qrId, onClose }) => {
   }, []);
 
   const handleUpdateConfig = useCallback((config) => {
-    console.log("🔄 Config updated:", config);
+    console.log("Config updated:", config);
     // You can implement config update logic here
     toast.success("Detection configuration updated");
   }, []);
@@ -983,14 +983,14 @@ const CardScanner = ({ onCardScanned, qrId, onClose }) => {
         const x = (vw - boxW) / 2;
         const y = (vh - boxH) / 2;
 
-        displayCtx.strokeStyle = "rgba(255, 255, 255, 0.3)";
+        displayCtx.strokeStyle = "transparent";
         displayCtx.lineWidth = cardDetected ? 4 : 2;
         displayCtx.setLineDash([10, 10]);
         displayCtx.strokeRect(x, y, boxW, boxH);
         displayCtx.setLineDash([]);
 
         const cornerSize = 30;
-        displayCtx.strokeStyle = "rgba(255, 255, 255, 0.5)";
+        displayCtx.strokeStyle = "transparent";
         displayCtx.lineWidth = 3;
         const corners = [
           [x, y, x + cornerSize, y],
@@ -1039,7 +1039,7 @@ const CardScanner = ({ onCardScanned, qrId, onClose }) => {
           displayCtx.font = "14px sans-serif";
           displayCtx.textAlign = "center";
           displayCtx.fillText(
-            "Bring card closer to camera",
+            // "Bring card closer to camera",
             vw / 2,
             vh / 2 + 60,
           );
@@ -1273,10 +1273,7 @@ const CardScanner = ({ onCardScanned, qrId, onClose }) => {
       {/* Card Not Found Popup - with delay and refresh */}
       <AnimatePresence>
         {showCardNotFoundPopup && (
-          <CardNotFoundPopup
-            onClose={closeCardNotFoundPopup}
-            delay={2000} // Show after 3 seconds
-          />
+          <CardNotFoundPopup onClose={closeCardNotFoundPopup} delay={2000} />
         )}
       </AnimatePresence>
 
